@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Copy, LogOut } from 'lucide-react'
-import { formatAmount, getWalletState, type WalletState } from '../lib/chain'
+import { NETWORK } from '../config'
+import { formatAmount, getWalletState, type WalletState } from '../lib/solana'
 import { useT } from '../lib/i18n'
 import { shortAddress, useWallet } from '../lib/wallet'
 import { MotionButton } from './MotionButton'
@@ -52,29 +53,21 @@ export function WalletMenu() {
             transition={{ type: 'spring', stiffness: 420, damping: 30 }}
             className="absolute right-0 z-40 mt-2 w-72 rounded-3xl border border-line bg-surface p-4 shadow-lg"
           >
-            <div className="text-xs text-mute">{walletName ?? t('wallets')} · Stellar testnet</div>
+            <div className="text-xs text-mute">{walletName ?? t('wallets')} · Solana {NETWORK.label.toLowerCase()}</div>
             <div className="mt-1 break-all text-sm text-ink">{address}</div>
             <div className="mt-3 space-y-2 text-sm">
               <div className="flex items-center justify-between">
                 <span className="inline-flex items-center gap-2 text-mute">
-                  <TokenIcon symbol="XLM" size={18} /> XLM
+                  <TokenIcon symbol="SOL" size={18} /> SOL
                 </span>
-                <span className="text-ink">{state ? formatAmount(state.xlm) : '·'}</span>
+                <span className="text-ink">{state ? formatAmount(state.sol, 4) : '·'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="inline-flex items-center gap-2 text-mute">
                   <TokenIcon symbol="USDC" size={18} /> USDC
                 </span>
-                <span className="text-ink">{state && state.blendUsdc !== null ? formatAmount(state.blendUsdc) : '·'}</span>
+                <span className="text-ink">{state && state.usdc !== null ? formatAmount(state.usdc) : '·'}</span>
               </div>
-              {state && state.usdt0 !== null ? (
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-2 text-mute">
-                    <TokenIcon symbol="USDT0" size={18} /> USDT0
-                  </span>
-                  <span className="text-ink">{formatAmount(state.usdt0)}</span>
-                </div>
-              ) : null}
             </div>
             <div className="mt-4 flex gap-2">
               <MotionButton variant="ghost" className="flex-1" onClick={() => void copy()}>

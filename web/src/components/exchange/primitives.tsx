@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertCircle, ArrowUpRight, Check, ChevronDown, Copy, RefreshCw } from 'lucide-react'
-import { formatAmount } from '../../lib/chain'
+import { formatAmount } from '../../lib/solana'
 import { useT } from '../../lib/i18n'
 import { TokenIcon, type TokenSymbol } from '../TokenIcon'
 

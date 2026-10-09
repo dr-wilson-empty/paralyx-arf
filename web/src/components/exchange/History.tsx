@@ -1,4 +1,4 @@
-import { ArrowUpRight, Banknote, Building2, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowUpRight, Banknote, RefreshCw, Trash2 } from 'lucide-react'
 import { clearHistory, useHistory, type HistoryKind } from '../../lib/history'
 import { useT } from '../../lib/i18n'
 import { TokenIcon } from '../TokenIcon'
@@ -15,9 +15,6 @@ function relative(at: number, lang: 'tr' | 'en'): string {
 function Icon({ kind }: { kind: HistoryKind }) {
   if (kind === 'cashout') return <TokenIcon symbol="TRY" size={22} />
   if (kind === 'repay') return <Banknote className="h-4 w-4" />
-  if (kind === 'usdt0') return <TokenIcon symbol="USDT0" size={22} />
-  if (kind === 'usdc') return <TokenIcon symbol="USDC" size={22} />
-  if (kind === 'exchange') return <Building2 className="h-4 w-4" />
   return <RefreshCw className="h-4 w-4" />
 }
 

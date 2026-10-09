@@ -2,11 +2,10 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { Activity, ArrowDownToLine, Code2, LayoutDashboard, LineChart, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Sun } from 'lucide-react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { CREDIT_LINE_CONTRACT, EXPLORER_CONTRACT, IS_MAINNET, NETWORK_ID, switchNetwork } from '../config'
-import { getPoolOverview } from '../lib/blend'
-import { getActivity, getLineCount } from '../lib/chain'
+import { IS_MAINNET, NETWORKS, NETWORK_ID, PROGRAM_ID, addressLink, switchNetwork, type NetworkId } from '../config'
+import { getActivity, getLineCount } from '../lib/solana'
 import { useT, type DictKey } from '../lib/i18n'
-import { getTryPerUsdHistory, getXlmCandles } from '../lib/reflector'
+import { getSolUsdHistory, getTryPerUsdHistory } from '../lib/prices'
 import { load, useInflight } from '../lib/store'
 import { useTheme } from '../lib/theme'
 import { useWallet } from '../lib/wallet'
@@ -41,14 +40,14 @@ function readCollapsed(): boolean {
 }
 
 function prefetch(path: string): void {
-  if (path === '/market') void load('overview', getPoolOverview, { ttl: 60_000, persist: true }).catch(() => undefined)
-  if (path === '/activity' && CREDIT_LINE_CONTRACT) {
+  if (path === '/market') void load('overview', () => import('../lib/kamino').then((module) => module.getMarketOverview()), { ttl: 60_000, persist: true }).catch(() => undefined)
+  if (path === '/activity' && PROGRAM_ID) {
     void load('events', getActivity, { ttl: 20_000, persist: true }).catch(() => undefined)
     void load('lineCount', getLineCount, { ttl: 30_000, persist: true }).catch(() => undefined)
   }
   if (path === '/') {
     void load('chart:try', getTryPerUsdHistory, { ttl: 120_000, persist: true }).catch(() => undefined)
-    void load('chart:xlm:24h', () => getXlmCandles('24h'), { ttl: 120_000, persist: true }).catch(() => undefined)
+    void load('chart:sol:24h', () => getSolUsdHistory('24h'), { ttl: 60_000, persist: true }).catch(() => undefined)
   }
 }
 
@@ -131,7 +130,7 @@ export function Shell({ children }: { children: ReactNode }) {
           ))}
         </div>
         <div className={'mt-auto space-y-3 ' + (collapsed ? 'px-0' : 'px-3')}>
-          {collapsed ? null : <span className="pill">{IS_MAINNET ? t('mainnetNotice') : t('testnet')}</span>}
+          {collapsed ? null : <span className="pill">{IS_MAINNET ? t('mainnetNotice') : t('devnet')}</span>}
           <button
             type="button"
             onClick={toggleCollapsed}
@@ -161,14 +160,14 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center rounded-full border border-line p-0.5 text-xs">
-              {(['testnet', 'mainnet'] as const).map((id) => (
+              {(Object.keys(NETWORKS) as NetworkId[]).map((id) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => id !== NETWORK_ID && switchNetwork(id)}
                   className={'rounded-full px-2.5 py-1 transition ' + (NETWORK_ID === id ? 'bg-accent text-on-accent' : 'text-mute hover:text-ink')}
                 >
-                  {id === 'testnet' ? 'Testnet' : 'Mainnet'}
+                  {NETWORKS[id].label}
                 </button>
               ))}
             </div>
@@ -200,12 +199,12 @@ export function Shell({ children }: { children: ReactNode }) {
             <a className="inline-flex items-center gap-1.5 hover:text-ink" href="https://github.com/wienerlabs/paralyx" target="_blank" rel="noreferrer">
               <Code2 className="h-3.5 w-3.5" /> GitHub
             </a>
-            {CREDIT_LINE_CONTRACT ? (
-              <a className="hover:text-ink" href={`${EXPLORER_CONTRACT}${CREDIT_LINE_CONTRACT}`} target="_blank" rel="noreferrer">
-                {t('contract')} · {CREDIT_LINE_CONTRACT.slice(0, 6)}…{CREDIT_LINE_CONTRACT.slice(-4)}
+            {PROGRAM_ID ? (
+              <a className="hover:text-ink" href={addressLink(PROGRAM_ID)} target="_blank" rel="noreferrer">
+                {t('contract')} · {PROGRAM_ID.slice(0, 6)}…{PROGRAM_ID.slice(-4)}
               </a>
             ) : null}
-            <span>{IS_MAINNET ? 'Stellar mainnet' : 'Stellar testnet'}</span>
+            <span>{IS_MAINNET ? 'Solana mainnet' : 'Solana devnet'}</span>
           </div>
         </footer>
       </div>

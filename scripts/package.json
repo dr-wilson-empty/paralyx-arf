@@ -2,8 +2,6 @@
   "name": "paralyx-scripts",
   "private": true,
   "type": "module",
-  "version": "0.1.0",
-  "dependencies": {
-    "@stellar/stellar-sdk": "^17.1.0"
-  }
+  "version": "0.2.0",
+  "description": "Solana helpers for Paralyx; they import web/src/lib, so run npm install in web/ first"
 }

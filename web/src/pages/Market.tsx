@@ -1,20 +1,20 @@
 import { useMemo } from 'react'
-import { BLEND_POOL, CREDIT_LINE_CONTRACT, EXPLORER_CONTRACT, IS_MAINNET } from '../config'
+import { IS_MAINNET, NETWORK, PROGRAM_ID, addressLink } from '../config'
 import { useCached } from '../lib/store'
-import { borrowAllowed, getPoolOverview, poolStatusKey, supplyAllowed } from '../lib/blend'
-import { PoolStatusBadge } from '../components/PoolStatusBadge'
-import { formatAmount, getActivity, type ActivityEvent } from '../lib/chain'
+import type { MarketOverview } from '../lib/kamino'
+import { MarketStatusBadge, borrowAllowed, marketStatusKey, supplyAllowed } from '../components/MarketStatusBadge'
+import { formatAmount, getActivity, getLineCount, type ActivityEvent } from '../lib/solana'
 import { useT } from '../lib/i18n'
 import { PriceChart, type Point } from '../components/PriceChart'
-import { TokenIcon } from '../components/TokenIcon'
+import { KaminoWordmark, TokenIcon } from '../components/TokenIcon'
 import { hourlyBuckets, TrendCard } from '../components/TrendCard'
 
 function cumulative(events: ActivityEvent[], pick: (event: ActivityEvent) => number): Point[] {
-  const ordered = [...events].sort((a, b) => a.ledger - b.ledger)
+  const ordered = [...events].sort((a, b) => a.slot - b.slot)
   let running = 0
   const points = ordered.map((event) => {
     running += pick(event)
-    return { t: event.closedAt || event.ledger * 5000, v: running }
+    return { t: event.closedAt || event.slot * 400, v: running }
   })
   if (points.length === 1) points.unshift({ t: points[0].t - 3_600_000, v: 0 })
   if (points.length > 0) points.push({ t: Date.now(), v: points[points.length - 1].v })
@@ -31,8 +31,9 @@ function usd(value: number): string {
 
 export function Market() {
   const { t } = useT()
-  const overviewQuery = useCached('overview', getPoolOverview, { ttl: 60_000, persist: true, refreshMs: 60_000 })
-  const eventsQuery = useCached(CREDIT_LINE_CONTRACT ? 'events' : null, getActivity, { ttl: 20_000, persist: true, refreshMs: 30_000 })
+  const overviewQuery = useCached<MarketOverview>('overview', () => import('../lib/kamino').then((module) => module.getMarketOverview()), { ttl: 60_000, persist: true, refreshMs: 60_000 })
+  const eventsQuery = useCached(PROGRAM_ID ? 'events' : null, getActivity, { ttl: 20_000, persist: true, refreshMs: 30_000 })
+  const countQuery = useCached(PROGRAM_ID ? 'lineCount' : null, getLineCount, { ttl: 30_000, persist: true, refreshMs: 30_000 })
   const overview = overviewQuery.data ?? null
   const events = useMemo<ActivityEvent[]>(() => eventsQuery.data ?? [], [eventsQuery.data])
   const error = overview ? null : overviewQuery.error
@@ -44,13 +45,13 @@ export function Market() {
   )
   const payoutTotal = events.filter((event) => event.kind === 'payout').reduce((sum, event) => sum + Number(event.a) / 100, 0)
   const payoutLastHour = payoutBuckets[payoutBuckets.length - 1]?.value ?? 0
-  const usdcPoints = useMemo(() => cumulative(events.filter((event) => event.kind === 'opened'), (event) => Number(event.b) / 10_000_000), [events])
+  const usdcPoints = useMemo(() => cumulative(events.filter((event) => event.kind === 'opened'), (event) => Number(event.b) / 1_000_000), [events])
 
   const cards = [
     { label: t('poolSupplied'), value: overview ? usd(overview.totalSuppliedUsd) : '·' },
     { label: t('poolBorrowed'), value: overview ? usd(overview.totalBorrowedUsd) : '·' },
     { label: t('utilization'), value: overview ? pct(overview.utilization) : '·' },
-    { label: t('paralyxShare'), value: overview ? String(overview.lineCount) : '·' },
+    { label: t('paralyxShare'), value: PROGRAM_ID ? String(countQuery.data ?? '·') : '·' },
   ]
 
   return (
@@ -68,62 +69,67 @@ export function Market() {
         ))}
       </section>
       <section className="card mt-5 overflow-x-auto">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-lg text-ink">{IS_MAINNET ? t('poolNameMainnet') : t('poolNameTestnet')}</h3>
-            <PoolStatusBadge status={overview?.status ?? null} />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <KaminoWordmark height={16} />
+            <h3 className="text-lg text-ink">{NETWORK.marketName.replace('Kamino Lend · ', '')}</h3>
+            <MarketStatusBadge status={overview?.status ?? null} />
           </div>
-          <a className="text-xs text-mute underline" href={`${EXPLORER_CONTRACT}${BLEND_POOL}`} target="_blank" rel="noreferrer">
-            {BLEND_POOL.slice(0, 8)}…{BLEND_POOL.slice(-6)}
+          <a className="text-xs text-mute underline" href={addressLink(NETWORK.market)} target="_blank" rel="noreferrer">
+            {NETWORK.market.slice(0, 8)}…{NETWORK.market.slice(-6)}
           </a>
         </div>
-        <table className="mt-4 w-full min-w-[720px] text-sm">
+        <table className="mt-4 w-full min-w-[820px] text-sm">
           <thead>
             <tr className="text-left text-xs text-mute">
               <th className="pb-3 font-light">{t('asset')}</th>
               <th className="pb-3 font-light">{t('price')}</th>
               <th className="pb-3 font-light">{t('supplied')}</th>
-              <th className="pb-3 font-light">{t('supplyApr')}</th>
+              <th className="pb-3 font-light">{t('supplyApy')}</th>
               <th className="pb-3 font-light">{t('borrowed')}</th>
-              <th className="pb-3 font-light">{t('borrowApr')}</th>
+              <th className="pb-3 font-light">{t('borrowApy')}</th>
               <th className="pb-3 font-light">{t('utilization')}</th>
-              <th className="pb-3 font-light">{t('collateralFactor')}</th>
+              <th className="pb-3 font-light">{t('maxLtv')}</th>
+              <th className="pb-3 font-light">{t('liquidationLtv')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
             {(overview?.reserves ?? []).map((row) => (
-              <tr key={row.asset}>
+              <tr key={row.address}>
                 <td className="py-3">
-                  <span className="inline-flex items-center gap-3">
+                  <a className="inline-flex items-center gap-3" href={addressLink(row.address)} target="_blank" rel="noreferrer">
                     <TokenIcon symbol={row.symbol} size={30} />
                     <span>
-                      <span className="block text-ink">{row.label}</span>
-                      <span className="block text-xs text-mute">{row.asset.slice(0, 6)}…{row.asset.slice(-4)}</span>
+                      <span className="block text-ink">{row.symbol}</span>
+                      <span className="block text-xs text-mute">
+                        {row.address.slice(0, 6)}…{row.address.slice(-4)}
+                      </span>
                     </span>
-                  </span>
+                  </a>
                 </td>
                 <td className="py-3 text-ink">${formatAmount(row.price, row.price < 1 ? 4 : 2)}</td>
                 <td className="py-3">
                   <span className="block text-ink">
-                    {formatAmount(row.supplied, 0)} {row.label}
+                    {formatAmount(row.supplied, row.supplied < 100 ? 2 : 0)} {row.symbol}
                   </span>
                   <span className="block text-xs text-mute">{usd(row.suppliedUsd)}</span>
                 </td>
-                <td className="py-3 text-ink">{pct(row.supplyApr)}</td>
+                <td className="py-3 text-ink">{pct(row.supplyApy)}</td>
                 <td className="py-3">
                   <span className="block text-ink">
-                    {formatAmount(row.borrowed, 0)} {row.label}
+                    {formatAmount(row.borrowed, row.borrowed < 100 ? 2 : 0)} {row.symbol}
                   </span>
                   <span className="block text-xs text-mute">{usd(row.borrowedUsd)}</span>
                 </td>
-                <td className="py-3 text-ink">{pct(row.borrowApr)}</td>
+                <td className="py-3 text-ink">{pct(row.borrowApy)}</td>
                 <td className="py-3 text-ink">{pct(row.utilization)}</td>
-                <td className="py-3 text-ink">{pct(row.cFactor)}</td>
+                <td className="py-3 text-ink">{pct(row.loanToValue)}</td>
+                <td className="py-3 text-ink">{pct(row.liquidationLtv)}</td>
               </tr>
             ))}
             {!overview && !error ? (
               <tr>
-                <td colSpan={8} className="py-6 text-center text-mute">
+                <td colSpan={9} className="py-6 text-center text-mute">
                   ·
                 </td>
               </tr>
@@ -133,9 +139,8 @@ export function Market() {
         <p className="mt-3 text-xs text-mute">{t('ratesHint')}</p>
         {overview && !borrowAllowed(overview.status) ? (
           <div className="mt-3 rounded-2xl bg-soft p-4 text-xs text-mute">
-            <div className="text-ink">{t(poolStatusKey(overview.status))}</div>
+            <div className="text-ink">{t(marketStatusKey(overview.status))}</div>
             <p className="mt-1">{supplyAllowed(overview.status) ? t('borrowClosedHint') : t('supplyClosedHint')}</p>
-            {IS_MAINNET ? <p className="mt-1">{t('borrowClosedMainnetNote')}</p> : null}
           </div>
         ) : null}
         {error ? <p className="mt-2 text-xs text-ink">{error}</p> : null}
@@ -143,11 +148,15 @@ export function Market() {
       <section className="mt-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-lg text-ink">{t('protocolTitle')}</h3>
-          <a className="text-xs text-mute underline" href={`${EXPLORER_CONTRACT}${CREDIT_LINE_CONTRACT}`} target="_blank" rel="noreferrer">
-            {CREDIT_LINE_CONTRACT.slice(0, 8)}…{CREDIT_LINE_CONTRACT.slice(-6)}
-          </a>
+          {PROGRAM_ID ? (
+            <a className="text-xs text-mute underline" href={addressLink(PROGRAM_ID)} target="_blank" rel="noreferrer">
+              {PROGRAM_ID.slice(0, 8)}…{PROGRAM_ID.slice(-6)}
+            </a>
+          ) : (
+            <span className="text-xs text-mute">{t('contractPending')}</span>
+          )}
         </div>
-        <div className="grid gap-5 lg:grid-cols-3">
+        <div className="grid gap-5 lg:grid-cols-3 *:min-w-0">
           <TrendCard
             title={t('trendPayouts')}
             subtitle={t('trendSub')}
@@ -166,7 +175,7 @@ export function Market() {
             icon={<TokenIcon symbol="TRY" size={32} />}
             stepped
             dense={false}
-            emptyLabel={IS_MAINNET ? t('emptyPayoutsMainnet') : t('emptyPayoutsTestnet')}
+            emptyLabel={IS_MAINNET ? t('emptyPayoutsMainnet') : t('emptyPayoutsDevnet')}
           />
           <PriceChart
             title={t('cumulativeUsdc')}

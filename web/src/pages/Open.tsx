@@ -1,6 +1,5 @@
 import { LineCard, OpenCard, WalletCard, WithdrawCard } from '../components/cards'
-import { TokenIcon } from '../components/TokenIcon'
-import { IS_MAINNET } from '../config'
+import { KaminoMark, TokenIcon } from '../components/TokenIcon'
 import { useT, type DictKey } from '../lib/i18n'
 import { useShared } from '../lib/useShared'
 
@@ -13,7 +12,7 @@ export function Open() {
         <h1 className="text-3xl tracking-tight text-ink sm:text-4xl">{t('openTitleLong')}</h1>
         <p className="mt-2 max-w-2xl text-base text-mute">{t('openBody')}</p>
       </section>
-      <section className="grid gap-5 lg:grid-cols-5">
+      <section className="grid gap-5 lg:grid-cols-5 *:min-w-0">
         <div className="space-y-5 lg:col-span-3">
           <WalletCard {...shared} />
           <OpenCard {...shared} />
@@ -25,20 +24,20 @@ export function Open() {
             <h3 className="text-lg text-ink">{t('soonTitle')}</h3>
             <ul className="mt-3 space-y-3 text-sm text-mute">
               <li className="flex gap-3">
-                <TokenIcon symbol="USDT0" size={20} className="mt-0.5" />
-                <span>{IS_MAINNET ? t('soonUsdt0Mainnet') : t('soonUsdt0')}</span>
+                <TokenIcon symbol="TRY" size={20} className="mt-0.5" />
+                <span>{t('soonBilira')}</span>
+              </li>
+              <li className="flex gap-3">
+                <TokenIcon symbol="SOL" size={20} className="mt-0.5" />
+                <span>{t('soonMainnet')}</span>
               </li>
               <li className="flex gap-3">
                 <TokenIcon symbol="USDC" size={20} className="mt-0.5" />
                 <span>{t('soonCctp')}</span>
               </li>
               <li className="flex gap-3">
-                <TokenIcon symbol="TRY" size={20} className="mt-0.5" />
-                <span>{t('soonAnchor')}</span>
-              </li>
-              <li className="flex gap-3">
-                <TokenIcon symbol="XLM" size={20} className="mt-0.5" />
-                <span>{t('soonSpp')}</span>
+                <KaminoMark size={18} className="mt-0.5 w-5 justify-center" />
+                <span>{t('soonGuardian')}</span>
               </li>
             </ul>
           </div>

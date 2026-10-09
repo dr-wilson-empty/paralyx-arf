@@ -7,6 +7,8 @@ dist/
 .DS_Store
 *.log
 .vercel/
-.stellar/
+.anchor/
+test-ledger/
 .keys/
 contracts/fixtures/mainnet/
+.claude/

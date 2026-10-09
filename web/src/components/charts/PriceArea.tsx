@@ -1,6 +1,14 @@
 import { useEffect, useRef } from 'react'
 import { AreaSeries, CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineStyle, LineType, createChart, type IChartApi, type ISeriesApi, type MouseEventParams, type Time, type UTCTimestamp } from 'lightweight-charts'
-import type { Candle } from '../../lib/reflector'
+
+export interface Candle {
+  t: number
+  o: number
+  h: number
+  l: number
+  c: number
+  v: number
+}
 
 export interface AreaPoint {
   t: number

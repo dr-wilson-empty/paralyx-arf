@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, X } from 'lucide-react'
+import { ChevronDown, Wallet, X } from 'lucide-react'
+import { NETWORK } from '../config'
 import { useT } from '../lib/i18n'
 import { useWallet } from '../lib/wallet'
 
 export function ConnectModal() {
   const { t } = useT()
-  const { connectOpen, closeConnect, supported, connect, connecting } = useWallet()
+  const { connectOpen, closeConnect, supported, connect, connecting, error } = useWallet()
   const [showOthers, setShowOthers] = useState(false)
   const installed = supported.filter((wallet) => wallet.isAvailable)
   const others = supported.filter((wallet) => !wallet.isAvailable)
@@ -73,7 +74,7 @@ export function ConnectModal() {
                     className="flex w-full items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-left transition hover:border-accent-strong hover:bg-accent-soft disabled:opacity-50"
                   >
                     <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-white">
-                      {wallet.icon ? <img src={wallet.icon} alt="" className="h-6 w-6 object-contain" /> : null}
+                      {wallet.icon ? <img src={wallet.icon} alt="" className="h-6 w-6 object-contain" /> : <Wallet className="h-4 w-4 text-mute" />}
                     </span>
                     <span className="flex-1">
                       <span className="block text-sm text-ink">{wallet.name}</span>
@@ -98,8 +99,9 @@ export function ConnectModal() {
                 </li>
               ) : null}
             </ul>
+            {error ? <p className="mt-3 break-all text-xs text-ink">{error}</p> : null}
             <p className="mt-4 text-xs text-mute">
-              {t('network')}: Stellar testnet
+              {t('network')}: Solana {NETWORK.label.toLowerCase()}
             </p>
           </motion.div>
         </motion.div>

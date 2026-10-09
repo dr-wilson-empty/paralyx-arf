@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NETWORK_ID } from '../config'
 
-export type HistoryKind = 'cashout' | 'repay' | 'exchange' | 'usdt0' | 'usdc'
+export type HistoryKind = 'cashout' | 'repay'
 
 export interface HistoryItem {
   id: string

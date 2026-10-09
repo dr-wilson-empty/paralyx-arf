@@ -1,9 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { ArrowDownRight, ArrowUpRight, BarChart3, LineChart } from 'lucide-react'
-import { formatAmount } from '../lib/chain'
+import { formatAmount } from '../lib/solana'
 import { useT } from '../lib/i18n'
-import type { Candle } from '../lib/reflector'
-import { PriceArea, type HoverInfo } from './charts/PriceArea'
+import { PriceArea, type Candle, type HoverInfo } from './charts/PriceArea'
 
 export interface Point {
   t: number
@@ -36,6 +35,7 @@ export function PriceChart({
   dense = true,
   minSpan = 0,
   emptyLabel,
+  volumeUnit = '',
 }: {
   title: string
   subtitle: string
@@ -57,6 +57,7 @@ export function PriceChart({
   dense?: boolean
   minSpan?: number
   emptyLabel?: string
+  volumeUnit?: string
 }) {
   const { t, lang } = useT()
   const [mode, setMode] = useState<'area' | 'candles'>('area')
@@ -167,7 +168,7 @@ export function PriceChart({
               </span>
             </div>
             <div className="mt-0.5">
-              {t('statVolume')} <span className="text-ink">{formatAmount(hover.candle.v, 0)} XLM</span>
+              {t('statVolume')} <span className="text-ink">{formatAmount(hover.candle.v, 0)} {volumeUnit}</span>
             </div>
           </div>
         ) : null}
@@ -189,7 +190,7 @@ export function PriceChart({
           </div>
           <div>
             <div className="text-mute">{stats.volume !== null ? t('statVolume') : stepped ? t('totalLabel') : t('statChange')}</div>
-            <div className="text-ink">{stats.volume !== null ? `${formatAmount(stats.volume / 1_000_000, 2)}M XLM` : stepped ? format(stats.last) : changeLabel}</div>
+            <div className="text-ink">{stats.volume !== null ? `${formatAmount(stats.volume / 1_000_000, 2)}M ${volumeUnit}` : stepped ? format(stats.last) : changeLabel}</div>
           </div>
         </div>
       ) : null}

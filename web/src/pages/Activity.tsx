@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react'
 import { ActivityList } from '../components/cards'
 import { MotionButton } from '../components/MotionButton'
 import { TokenIcon, type TokenSymbol } from '../components/TokenIcon'
-import { CREDIT_LINE_CONTRACT, EXPLORER_CONTRACT } from '../config'
+import { PROGRAM_ID, SOL_DECIMALS, USDC_DECIMALS, addressLink } from '../config'
 import { useCached } from '../lib/store'
-import { formatAmount, fromStroops, getActivity, getLineCount, type ActivityEvent } from '../lib/chain'
+import { formatAmount, fromUnits, getActivity, getLineCount, type ActivityEvent } from '../lib/solana'
 import { useT } from '../lib/i18n'
 import { useWallet } from '../lib/wallet'
 
@@ -12,22 +12,22 @@ export function Activity() {
   const { t } = useT()
   const { address } = useWallet()
   const [mine, setMine] = useState(false)
-  const countQuery = useCached(CREDIT_LINE_CONTRACT ? 'lineCount' : null, getLineCount, { ttl: 30_000, persist: true, refreshMs: 30_000 })
-  const eventsQuery = useCached(CREDIT_LINE_CONTRACT ? 'events' : null, getActivity, { ttl: 20_000, persist: true, refreshMs: 30_000 })
+  const countQuery = useCached(PROGRAM_ID ? 'lineCount' : null, getLineCount, { ttl: 30_000, persist: true, refreshMs: 30_000 })
+  const eventsQuery = useCached(PROGRAM_ID ? 'events' : null, getActivity, { ttl: 20_000, persist: true, refreshMs: 30_000 })
   const count = countQuery.data ?? null
   const events = useMemo<ActivityEvent[]>(() => eventsQuery.data ?? [], [eventsQuery.data])
 
   const opened = events.filter((event) => event.kind === 'opened')
   const payouts = events.filter((event) => event.kind === 'payout')
-  const xlm = opened.reduce((sum, event) => sum + event.a, 0n)
+  const sol = opened.reduce((sum, event) => sum + event.a, 0n)
   const usdc = opened.reduce((sum, event) => sum + event.b, 0n)
   const tryPaid = payouts.reduce((sum, event) => sum + event.a, 0n)
   const visible = mine && address ? events.filter((event) => event.user === address) : events
 
   const cards: { label: string; value: string; symbol?: TokenSymbol }[] = [
     { label: t('linesOpened'), value: count === null ? '·' : String(count) },
-    { label: t('xlmLocked'), value: `${fromStroops(xlm, 0)} XLM`, symbol: 'XLM' },
-    { label: t('usdcBorrowed'), value: `${fromStroops(usdc)} USDC`, symbol: 'USDC' },
+    { label: t('solLocked'), value: `${fromUnits(sol, SOL_DECIMALS, 2)} SOL`, symbol: 'SOL' },
+    { label: t('usdcBorrowed'), value: `${fromUnits(usdc, USDC_DECIMALS)} USDC`, symbol: 'USDC' },
     { label: t('tryPaid'), value: `₺${formatAmount(Number(tryPaid) / 100)}`, symbol: 'TRY' },
   ]
 
@@ -35,11 +35,15 @@ export function Activity() {
     <div>
       <section className="pb-6">
         <h1 className="text-3xl tracking-tight text-ink sm:text-4xl">{t('activityTitle')}</h1>
-        <p className="mt-2 text-sm text-mute">
+        <p className="mt-2 break-all text-sm text-mute">
           {t('contract')}:{' '}
-          <a className="underline" href={`${EXPLORER_CONTRACT}${CREDIT_LINE_CONTRACT}`} target="_blank" rel="noreferrer">
-            {CREDIT_LINE_CONTRACT}
-          </a>
+          {PROGRAM_ID ? (
+            <a className="underline" href={addressLink(PROGRAM_ID)} target="_blank" rel="noreferrer">
+              {PROGRAM_ID}
+            </a>
+          ) : (
+            t('contractPending')
+          )}
         </p>
       </section>
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

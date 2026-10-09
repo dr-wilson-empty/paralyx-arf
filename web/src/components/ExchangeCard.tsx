@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDownToLine, Banknote } from 'lucide-react'
-import { ANCHOR_HOME_DOMAIN, ANCHOR_MAX_TRY, ANCHOR_MAX_USDC } from '../config'
-import { authenticate, quoteTryToUsdc, quoteUsdcToTry, simulateBankTransfer, startDeposit, startWithdraw, waitForStatus, type Quote } from '../lib/anchor'
-import { convertCircleToBlendUsdc, formatAmount, payAnchorWithBlendUsdc, recordPayout, repayLine, toStroops } from '../lib/chain'
+import { ArrowDownToLine, Banknote, FlaskConical } from 'lucide-react'
+import { RAIL_MAX_TRY, RAIL_MAX_USDC, RAIL_MIN_TRY, RAIL_MIN_USDC, addressLink } from '../config'
+import { rail, type RailQuote } from '../lib/rail'
+import { REPAY_ALL, WITHDRAW_ALL, formatAmount, payToRail, recordPayout, repayLine, usdcUnits } from '../lib/solana'
 import { addHistory } from '../lib/history'
 import { useT } from '../lib/i18n'
+import { useLivePrices } from '../lib/prices'
 import { txLink, useFlow, type Shared } from '../lib/shared'
 import { MotionButton } from './MotionButton'
 import { Steps } from './Steps'
@@ -17,16 +18,15 @@ interface ReceiptData {
   title: string
   rows: ReceiptRow[]
   links: { label: string; href: string }[]
+  note?: string
 }
 
-const MIN_USDC = 0.5
-const MIN_TRY = 50
-
-export function ExchangeCard({ signer, wallet, line, health, rate, refresh }: Shared) {
+export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: Shared) {
   const { t } = useT()
+  const live = useLivePrices()
   const [mode, setMode] = useState<Mode>('cashout')
   const [amount, setAmount] = useState('10')
-  const [quote, setQuote] = useState<{ value: Quote; at: number } | null>(null)
+  const [quote, setQuote] = useState<{ value: RailQuote; at: number } | null>(null)
   const [quoting, setQuoting] = useState(false)
   const [withdrawAll, setWithdrawAll] = useState(true)
   const [receipt, setReceipt] = useState<ReceiptData | null>(null)
@@ -34,10 +34,10 @@ export function ExchangeCard({ signer, wallet, line, health, rate, refresh }: Sh
   const requestId = useRef(0)
   const cashOut = mode === 'cashout'
   const numeric = Number(amount) || 0
-  const available = wallet?.blendUsdc ?? 0
-  const debt = health?.debtUsdc ?? 0
-  const maxCashOut = Math.max(0, Math.min(available, ANCHOR_MAX_USDC))
-  const suggestedRepay = rate && debt > 0 ? Math.min(ANCHOR_MAX_TRY, Math.ceil(debt * 1.01 * rate)) : 0
+  const available = wallet?.usdc ?? 0
+  const debt = position?.debtUsdc ?? 0
+  const maxCashOut = Math.max(0, Math.min(available, RAIL_MAX_USDC))
+  const suggestedRepay = rate && debt > 0 ? Math.min(RAIL_MAX_TRY, Math.ceil(debt * 1.01 * rate)) : 0
 
   const fetchQuote = useCallback(async (value: number, direction: Mode) => {
     if (value <= 0) {
@@ -48,7 +48,7 @@ export function ExchangeCard({ signer, wallet, line, health, rate, refresh }: Sh
     const id = requestId.current
     setQuoting(true)
     try {
-      const result = direction === 'cashout' ? await quoteUsdcToTry(value) : await quoteTryToUsdc(value)
+      const result = await rail.quote(direction, value)
       if (id === requestId.current) setQuote({ value: result, at: Date.now() })
     } catch {
       if (id === requestId.current) setQuote(null)
@@ -74,11 +74,11 @@ export function ExchangeCard({ signer, wallet, line, health, rate, refresh }: Sh
   const amountError = useMemo(() => {
     if (!amount || numeric <= 0) return null
     if (cashOut) {
-      if (numeric < MIN_USDC || numeric > ANCHOR_MAX_USDC) return t('amountRange').replace('{min}', `${MIN_USDC} USDC`).replace('{max}', `${ANCHOR_MAX_USDC} USDC`)
+      if (numeric < RAIL_MIN_USDC || numeric > RAIL_MAX_USDC) return t('amountRange').replace('{min}', `${RAIL_MIN_USDC} USDC`).replace('{max}', `${RAIL_MAX_USDC} USDC`)
       if (wallet && numeric > available) return t('reasonBalance')
       return null
     }
-    if (numeric < MIN_TRY || numeric > ANCHOR_MAX_TRY) return t('amountRange').replace('{min}', `₺${MIN_TRY}`).replace('{max}', `₺${ANCHOR_MAX_TRY}`)
+    if (numeric < RAIL_MIN_TRY || numeric > RAIL_MAX_TRY) return t('amountRange').replace('{min}', `₺${RAIL_MIN_TRY}`).replace('{max}', `₺${RAIL_MAX_TRY}`)
     return null
   }, [amount, numeric, cashOut, available, wallet, t])
 
@@ -91,100 +91,95 @@ export function ExchangeCard({ signer, wallet, line, health, rate, refresh }: Sh
   const valid = reasons.length === 0 && !amountError && !flow.busy
 
   const runCashOut = () =>
-    flow.run(['anchorAuth', 'anchorQuote', 'anchorWithdraw', 'paying', 'anchorWait', 'recording', 'done'], async (mark) => {
+    flow.run(['railQuote', 'railPayout', 'paying', 'railWait', 'recording', 'done'], async (mark) => {
       if (!signer) throw new Error(t('needWallet'))
       setReceipt(null)
       mark(0, 'active')
-      const token = await authenticate(signer)
-      mark(0, 'done')
+      const fresh = await rail.quote('cashout', numeric)
+      mark(0, 'done', `₺${formatAmount(fresh.buyAmount)}`)
       mark(1, 'active')
-      const fresh = await quoteUsdcToTry(numeric)
-      mark(1, 'done', `₺${formatAmount(fresh.buyAmount)}`)
+      const instruction = await rail.startPayout(signer.address, numeric)
+      mark(1, 'done', `memo ${instruction.memo}`)
       mark(2, 'active')
-      const instruction = await startWithdraw(token, numeric)
-      mark(2, 'done', `memo ${instruction.memo}`)
+      const signature = await payToRail(signer, instruction.treasury, usdcUnits(numeric.toFixed(6)), instruction.memo)
+      mark(2, 'done', txLink(signature))
       mark(3, 'active')
-      const hash = await payAnchorWithBlendUsdc(signer, numeric.toFixed(7), instruction.accountId, instruction.memo)
-      mark(3, 'done', txLink(hash))
+      const settled = await rail.confirmPayout(instruction, signature)
+      mark(3, 'done', `₺${formatAmount(settled.amountOut)} · ${settled.externalTransactionId ?? ''}`)
       mark(4, 'active')
-      const settled = await waitForStatus(token, instruction.id, (status) => status === 'completed', (tx) => mark(4, 'active', tx.status))
-      if (settled.status !== 'completed') throw new Error(`anchor status ${settled.status}`)
-      const tryPaid = Number(settled.amountOut ?? fresh.buyAmount)
-      mark(4, 'done', `₺${formatAmount(tryPaid)}`)
-      mark(5, 'active')
-      const recordHash = await recordPayout(signer, instruction.id, BigInt(Math.round(tryPaid * 100)))
-      mark(5, 'done', txLink(recordHash))
-      mark(6, 'done')
-      const links = [{ label: t('view'), href: txLink(hash) }, ...(settled.moreInfoUrl ? [{ label: t('anchorTx'), href: settled.moreInfoUrl }] : [])]
+      const recordHash = await recordPayout(signer, instruction.id, BigInt(Math.round(settled.amountOut * 100)))
+      mark(4, 'done', txLink(recordHash))
+      mark(5, 'done')
+      const links = [
+        { label: t('view'), href: txLink(signature) },
+        { label: t('railTx'), href: txLink(recordHash) },
+      ]
       const rows: ReceiptRow[] = [
         { label: t('sentUsdc'), value: `${formatAmount(numeric)} USDC` },
-        { label: t('paidTry'), value: `₺${formatAmount(tryPaid)}` },
+        { label: t('paidTry'), value: `₺${formatAmount(settled.amountOut)}` },
       ]
-      if (settled.externalTransactionId) rows.push({ label: t('reference'), value: settled.externalTransactionId, copy: settled.externalTransactionId })
-      setReceipt({ title: t('receiptCashOut'), rows, links })
-      addHistory(signer.address, { kind: 'cashout', title: t('receiptCashOut'), amount: `₺${formatAmount(tryPaid)}`, detail: settled.externalTransactionId, links })
+      if (settled.externalTransactionId) rows.push({ label: t('sandboxReference'), value: settled.externalTransactionId, copy: settled.externalTransactionId })
+      setReceipt({ title: t('receiptCashOut'), rows, links, note: t('sandboxNote') })
+      addHistory(signer.address, { kind: 'cashout', title: t('receiptCashOut'), amount: `₺${formatAmount(settled.amountOut)}`, detail: settled.externalTransactionId, links })
       await refresh()
     })
 
   const runRepay = () =>
-    flow.run(['anchorAuth', 'anchorDeposit', 'anchorBank', 'anchorWait', 'converting', 'sending', 'done'], async (mark) => {
-      if (!signer || !health) throw new Error(t('needWallet'))
+    flow.run(['railQuote', 'railDeposit', 'railBank', 'railWait', 'sending', 'done'], async (mark) => {
+      if (!signer || !position) throw new Error(t('needWallet'))
       setReceipt(null)
       mark(0, 'active')
-      const token = await authenticate(signer)
-      mark(0, 'done')
+      const fresh = await rail.quote('repay', numeric)
+      mark(0, 'done', `${formatAmount(fresh.buyAmount, 4)} USDC`)
       mark(1, 'active')
-      const fresh = await quoteTryToUsdc(numeric)
-      const deposit = await startDeposit(token, signer.address, numeric)
-      mark(1, 'done', deposit.reference ? `${t('iban')} ${deposit.iban ?? ''} · ${t('reference')} ${deposit.reference}` : deposit.id)
+      const deposit = await rail.startDeposit(signer.address, numeric)
+      mark(1, 'done', `${t('iban')} ${deposit.iban} · ${deposit.reference}`)
       mark(2, 'active')
-      await simulateBankTransfer(token, deposit.id, numeric)
+      const settled = await rail.settleDeposit(deposit)
       mark(2, 'done')
-      mark(3, 'active')
-      const settled = await waitForStatus(token, deposit.id, (status) => status === 'completed', (tx) => mark(3, 'active', tx.status))
-      if (settled.status !== 'completed') throw new Error(`anchor status ${settled.status}`)
-      const received = Number(settled.amountOut ?? fresh.buyAmount)
-      mark(3, 'done', `${formatAmount(received)} USDC`)
+      mark(3, 'done', settled.signature ? txLink(settled.signature) : `${formatAmount(settled.amountOut)} USDC`)
       mark(4, 'active')
-      const repayUsdc = Math.min(received * 0.97, health.debtUsdc * 1.001)
-      const convertHash = await convertCircleToBlendUsdc(signer, repayUsdc.toFixed(7), received.toFixed(7))
-      mark(4, 'done', txLink(convertHash))
-      mark(5, 'active')
-      const fullRepay = received * 0.97 >= health.debtUsdc
-      const withdrawXlm = withdrawAll && fullRepay ? health.collateralXlm * 1.002 : 0
-      const hash = await repayLine(signer, toStroops(repayUsdc.toFixed(7)), toStroops(withdrawXlm.toFixed(7)))
-      mark(5, 'done', txLink(hash))
-      mark(6, 'done')
-      const remaining = Math.max(0, health.debtUsdc - repayUsdc)
-      const links = [{ label: t('view'), href: txLink(hash) }, ...(deposit.moreInfoUrl ? [{ label: t('anchorTx'), href: deposit.moreInfoUrl }] : [])]
+      const received = settled.amountOut
+      const spendable = received + (wallet?.usdc ?? 0)
+      const fullRepay = spendable >= position.debtUsdc * 1.0005
+      const repayUnits = fullRepay ? REPAY_ALL : usdcUnits((received * 0.999).toFixed(6))
+      const withdraw = withdrawAll && fullRepay ? WITHDRAW_ALL : 0n
+      const signature = await repayLine(signer, repayUnits, withdraw)
+      mark(4, 'done', txLink(signature))
+      mark(5, 'done')
+      const repaid = fullRepay ? position.debtUsdc : received * 0.999
+      const links = [{ label: t('view'), href: txLink(signature) }, ...(settled.signature ? [{ label: t('railTx'), href: txLink(settled.signature) }] : [])]
       const rows: ReceiptRow[] = [
         { label: t('amountTry'), value: `₺${formatAmount(numeric)}` },
         { label: t('receivedUsdc'), value: `${formatAmount(received)} USDC` },
-        { label: t('repaidUsdc'), value: `${formatAmount(repayUsdc)} USDC` },
-        { label: t('remainingDebt'), value: `${formatAmount(remaining)} USDC` },
+        { label: t('repaidUsdc'), value: `${formatAmount(repaid)} USDC` },
+        { label: t('remainingDebt'), value: `${formatAmount(Math.max(0, position.debtUsdc - repaid))} USDC` },
       ]
-      if (fullRepay && withdrawAll) rows.push({ label: t('collateralBack'), value: `${formatAmount(health.collateralXlm)} XLM` })
-      setReceipt({ title: t('receiptRepay'), rows, links })
-      addHistory(signer.address, { kind: 'repay', title: t('receiptRepay'), amount: `${formatAmount(repayUsdc)} USDC`, detail: `₺${formatAmount(numeric)}`, links })
+      if (fullRepay && withdrawAll) rows.push({ label: t('collateralBack'), value: `${formatAmount(position.collateralSol, 4)} SOL` })
+      setReceipt({ title: t('receiptRepay'), rows, links, note: t('sandboxNote') })
+      addHistory(signer.address, { kind: 'repay', title: t('receiptRepay'), amount: `${formatAmount(repaid)} USDC`, detail: `₺${formatAmount(numeric)}`, links })
       await refresh()
     })
 
   const total = quote ? quote.value.buyAmount : rate ? (cashOut ? numeric * rate : numeric / rate) : 0
   const fee = quote ? quote.value.feeTotal : numeric * 0.005
   const rateLine = rate ? (cashOut ? `1 USDC = ₺${formatAmount(rate)}` : `₺1 = ${formatAmount(1 / rate, 4)} USDC`) : '·'
+  const sourceLine = live.fxSource ? `${t('quoteHint')} · ${t('fxSource')}: ${live.fxSource === 'pyth' ? 'Pyth' : 'Reflector'}` : t('quoteHint')
 
   return (
     <div className="card">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="flex items-center gap-2 text-lg text-ink">
           <TokenIcon symbol="TRY" size={22} />
           {t('exchange')}
         </h3>
-        <span className="pill">SEP-6 · {ANCHOR_HOME_DOMAIN}</span>
+        <span className="pill inline-flex items-center gap-1.5">
+          <FlaskConical className="h-3.5 w-3.5" /> {t('sandboxBadge')}
+        </span>
       </div>
       <div className="mt-4">
         <ModeSwitch
-          name="testnet-exchange"
+          name="sandbox-exchange"
           value={mode}
           onChange={switchMode}
           disabled={flow.busy}
@@ -224,13 +219,12 @@ export function ExchangeCard({ signer, wallet, line, health, rate, refresh }: Sh
             {cashOut ? `₺${formatAmount(total)}` : `${formatAmount(total, 4)} USDC`}
           </span>
         </div>
-        <QuoteBar primary={rateLine} secondary={t('quoteHint')} updatedAt={quote?.at ?? null} loading={quoting} onRefresh={() => void fetchQuote(numeric, mode)} source={t('quoteAnchor')} />
+        <QuoteBar primary={rateLine} secondary={sourceLine} updatedAt={quote?.at ?? null} loading={quoting} onRefresh={() => void fetchQuote(numeric, mode)} source={t('quoteRail')} />
         <Details
           title={t('details')}
           rows={[
-            { label: t('feeAnchorPct'), value: cashOut ? `${formatAmount(fee, 4)} USDC` : `₺${formatAmount(fee)}` },
-            { label: t('networkFee'), value: t('networkFeeValue'), icon: <TokenIcon symbol="XLM" size={14} /> },
-            { label: t('seamDex'), value: t('seamDexValue') },
+            { label: t('feeRailPct'), value: cashOut ? `${formatAmount(fee, 4)} USDC` : `₺${formatAmount(fee)}` },
+            { label: t('networkFee'), value: t('networkFeeValue'), icon: <TokenIcon symbol="SOL" size={14} /> },
             { label: t('arrival'), value: t('arrivalSandbox') },
           ]}
         />
@@ -252,6 +246,7 @@ export function ExchangeCard({ signer, wallet, line, health, rate, refresh }: Sh
           title={receipt.title}
           rows={receipt.rows}
           links={receipt.links}
+          note={receipt.note}
           resetLabel={t('newTransaction')}
           onReset={() => {
             setReceipt(null)
@@ -260,6 +255,34 @@ export function ExchangeCard({ signer, wallet, line, health, rate, refresh }: Sh
         />
       ) : null}
       {flow.error ? <p className="mt-3 break-all text-sm text-ink">{flow.error}</p> : null}
+    </div>
+  )
+}
+
+export function RailPendingCard() {
+  const { t, lang } = useT()
+  return (
+    <div className="card">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="flex items-center gap-2 text-lg text-ink">
+          <TokenIcon symbol="TRY" size={22} />
+          {t('railPendingTitle')}
+        </h3>
+        <span className="pill">{rail.label}</span>
+      </div>
+      <div className="mt-3 rounded-2xl border border-line bg-soft px-4 py-2.5 text-xs text-mute">{t('mainnetWarning')}</div>
+      <p className="mt-4 text-sm text-mute">{t('railPendingBody')}</p>
+      <ol className="mt-3 space-y-2 text-sm text-mute">
+        {rail.todo.map((item, index) => (
+          <li key={item.en} className="flex gap-3">
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line text-[10px] text-ink">{index + 1}</span>
+            <span>{item[lang]}</span>
+          </li>
+        ))}
+      </ol>
+      <a className="mt-4 inline-block text-xs underline" href={addressLink('A94X2fRy3wydNShU4dRaDyap2UuoeWJGWyATtyp61WZf')} target="_blank" rel="noreferrer">
+        TRYB · A94X2f…1WZf
+      </a>
     </div>
   )
 }

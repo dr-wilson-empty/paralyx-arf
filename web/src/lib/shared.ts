@@ -1,25 +1,22 @@
 import { useState } from 'react'
-import { EXPLORER_TX } from '../config'
-import type { Health, Line, ReserveView, Signer, WalletState } from './chain'
+import type { MarketStatus, Position } from './kamino'
+import type { Line, Signer, WalletState } from './solana'
 import { useT, type DictKey } from './i18n'
 import type { Step } from '../components/Steps'
+
+export { txLink } from '../config'
 
 export interface Shared {
   signer: Signer | null
   wallet: WalletState | null
   line: Line | null
-  health: Health | null
-  reserves: { xlm: ReserveView; usdc: ReserveView } | null
+  position: Position | null
   rate: number | null
-  poolStatus: number | null
+  marketStatus: MarketStatus | null
   refresh: () => Promise<void>
 }
 
 export type Mark = (index: number, state: Step['state'], detail?: string) => void
-
-export function txLink(hash: string): string {
-  return `${EXPLORER_TX}${hash}`
-}
 
 export function useFlow() {
   const { t } = useT()
