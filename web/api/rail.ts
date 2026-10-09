@@ -14,6 +14,12 @@ const FEE_RATE = 0.005
 const USDC_DECIMALS = 6
 const LIMITS = { minUsdc: 0.5, maxUsdc: 300, minTry: 50, maxTry: 3000 }
 const TOKEN_TTL_SECONDS = 900
+const KLEND = new PublicKey('KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD')
+const OBLIGATION_BORROWS = 1208
+const OBLIGATION_BORROW_STRIDE = 200
+const OBLIGATION_BORROW_SLOTS = 5
+const BORROWED_AMOUNT_SF = 88
+const DEPOSIT_MARGIN_UNITS = 1_500_000n
 
 type Json = Record<string, unknown>
 
@@ -21,6 +27,8 @@ interface Env {
   treasury: Keypair | null
   connection: Connection
   usdcMint: string
+  market: PublicKey
+  debtReserve: PublicKey
   pythKey: string | null
   signingKey: Buffer
 }
@@ -32,6 +40,8 @@ function env(): Env {
     treasury,
     connection: new Connection(process.env.RAIL_RPC ?? 'https://api.devnet.solana.com', 'confirmed'),
     usdcMint: process.env.RAIL_USDC_MINT ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    market: new PublicKey(process.env.RAIL_MARKET ?? '4GiGCkrwHphwrsG8imKSHhjTtmbjorqYrYwMsRtBu77Z'),
+    debtReserve: new PublicKey(process.env.RAIL_DEBT_RESERVE ?? 'DJ8gPwXaEX2T8ZJGwZNJc9vL6iwrUUyUrwzeSgjD8RHH'),
     pythKey: process.env.PYTH_API_KEY || null,
     signingKey: createHash('sha256').update(`paralyx-sandbox-rail:${secret}`).digest(),
   }
@@ -240,6 +250,32 @@ async function confirmPayout(e: Env, body: Json) {
   }
 }
 
+async function kaminoDebt(e: Pick<Env, 'connection' | 'usdcMint' | 'market' | 'debtReserve'>, owner: PublicKey): Promise<{ debt: bigint; wallet: bigint }> {
+  const blank = PublicKey.default.toBuffer()
+  const [obligation] = PublicKey.findProgramAddressSync([Buffer.from([0]), Buffer.from([0]), owner.toBuffer(), e.market.toBuffer(), blank, blank], KLEND)
+  const [account, balance] = await Promise.all([
+    e.connection.getAccountInfo(obligation),
+    e.connection.getTokenAccountBalance(getAssociatedTokenAddressSync(new PublicKey(e.usdcMint), owner)).catch(() => null),
+  ])
+  let debt = 0n
+  if (account?.owner.equals(KLEND)) {
+    for (let slot = 0; slot < OBLIGATION_BORROW_SLOTS; slot++) {
+      const at = OBLIGATION_BORROWS + slot * OBLIGATION_BORROW_STRIDE
+      if (!new PublicKey(account.data.subarray(at, at + 32)).equals(e.debtReserve)) continue
+      const scaled = account.data.readBigUInt64LE(at + BORROWED_AMOUNT_SF) | (account.data.readBigUInt64LE(at + BORROWED_AMOUNT_SF + 8) << 64n)
+      debt += scaled >> 60n
+    }
+  }
+  return { debt, wallet: BigInt(balance?.value.amount ?? '0') }
+}
+
+export async function requireRepayment(e: Pick<Env, 'connection' | 'usdcMint' | 'market' | 'debtReserve'>, owner: PublicKey, usdcUnits: bigint): Promise<void> {
+  const { debt, wallet } = await kaminoDebt(e, owner)
+  if (debt === 0n) throw new RailError('this wallet has no USDC debt on Kamino; the sandbox only settles repayments', 409)
+  if (wallet >= debt) throw new RailError('this wallet already holds enough USDC to repay the debt', 409)
+  if (usdcUnits > (debt * 102n) / 100n + DEPOSIT_MARGIN_UNITS) throw new RailError('the deposit is larger than the open Kamino debt', 409)
+}
+
 async function startDeposit(e: Env, body: Json) {
   requireTreasury(e)
   const tryAmount = Number(body.tryAmount)
@@ -247,6 +283,7 @@ async function startDeposit(e: Env, body: Json) {
   if (!(tryAmount >= LIMITS.minTry && tryAmount <= LIMITS.maxTry)) throw new RailError(`amount must be between ${LIMITS.minTry} and ${LIMITS.maxTry} TRY`)
   const fx = await tryPerUsd(e)
   const q = quote(fx.tryPerUsd, 'repay', tryAmount)
+  await requireRepayment(e, new PublicKey(account), units(q.buyAmount))
   const id = `SBX-DP-${randomBytes(5).toString('hex').toUpperCase()}`
   const payload = { kind: 'deposit', id, account, tryAmount: tryAmount.toFixed(2), usdc: units(q.buyAmount).toString(), exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS }
   return {
@@ -291,6 +328,7 @@ async function settleDeposit(e: Env, body: Json) {
   const previous = recent.find((entry) => entry.memo?.includes(String(payload.id)) && !entry.err)
   if (previous) return { id: payload.id, status: 'completed', sandbox: true, amountOut: Number(payload.usdc) / 10 ** USDC_DECIMALS, signature: previous.signature, reused: true }
   const amount = BigInt(String(payload.usdc))
+  await requireRepayment(e, new PublicKey(String(payload.account)), amount)
   const balance = await e.connection.getTokenAccountBalance(treasuryAta).catch(() => null)
   if (!balance || BigInt(balance.value.amount) < amount) throw new RailError('the sandbox treasury does not hold enough devnet USDC, cash out first or top it up', 409)
   const user = new PublicKey(String(payload.account))

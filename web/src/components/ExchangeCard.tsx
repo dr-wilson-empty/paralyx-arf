@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDownToLine, Banknote, FlaskConical } from 'lucide-react'
 import { RAIL_MAX_TRY, RAIL_MAX_USDC, RAIL_MIN_TRY, RAIL_MIN_USDC, addressLink } from '../config'
-import { rail, type RailQuote } from '../lib/rail'
+import { rail, type RailQuote, type RailSettlement } from '../lib/rail'
 import { REPAY_ALL, WITHDRAW_ALL, formatAmount, payToRail, recordPayout, repayLine, usdcUnits } from '../lib/solana'
 import { addHistory } from '../lib/history'
 import { useT } from '../lib/i18n'
@@ -128,18 +128,23 @@ export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: 
     flow.run(['railQuote', 'railDeposit', 'railBank', 'railWait', 'sending', 'done'], async (mark) => {
       if (!signer || !position) throw new Error(t('needWallet'))
       setReceipt(null)
-      mark(0, 'active')
-      const fresh = await rail.quote('repay', numeric)
-      mark(0, 'done', `${formatAmount(fresh.buyAmount, 4)} USDC`)
-      mark(1, 'active')
-      const deposit = await rail.startDeposit(signer.address, numeric)
-      mark(1, 'done', `${t('iban')} ${deposit.iban} · ${deposit.reference}`)
-      mark(2, 'active')
-      const settled = await rail.settleDeposit(deposit)
-      mark(2, 'done')
-      mark(3, 'done', settled.signature ? txLink(settled.signature) : `${formatAmount(settled.amountOut)} USDC`)
+      let settled: RailSettlement | null = null
+      if ((wallet?.usdc ?? 0) >= position.debtUsdc * 1.0005) {
+        for (const step of [0, 1, 2, 3]) mark(step, 'done', t('walletCovers'))
+      } else {
+        mark(0, 'active')
+        const fresh = await rail.quote('repay', numeric)
+        mark(0, 'done', `${formatAmount(fresh.buyAmount, 4)} USDC`)
+        mark(1, 'active')
+        const deposit = await rail.startDeposit(signer.address, numeric)
+        mark(1, 'done', `${t('iban')} ${deposit.iban} · ${deposit.reference}`)
+        mark(2, 'active')
+        settled = await rail.settleDeposit(deposit)
+        mark(2, 'done')
+        mark(3, 'done', settled.signature ? txLink(settled.signature) : `${formatAmount(settled.amountOut)} USDC`)
+      }
       mark(4, 'active')
-      const received = settled.amountOut
+      const received = settled?.amountOut ?? 0
       const spendable = received + (wallet?.usdc ?? 0)
       const fullRepay = spendable >= position.debtUsdc * 1.0005
       const repayUnits = fullRepay ? REPAY_ALL : usdcUnits((received * 0.999).toFixed(6))
@@ -148,16 +153,20 @@ export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: 
       mark(4, 'done', txLink(signature))
       mark(5, 'done')
       const repaid = fullRepay ? position.debtUsdc : received * 0.999
-      const links = [{ label: t('view'), href: txLink(signature) }, ...(settled.signature ? [{ label: t('railTx'), href: txLink(settled.signature) }] : [])]
+      const links = [{ label: t('view'), href: txLink(signature) }, ...(settled?.signature ? [{ label: t('railTx'), href: txLink(settled.signature) }] : [])]
       const rows: ReceiptRow[] = [
-        { label: t('amountTry'), value: `₺${formatAmount(numeric)}` },
-        { label: t('receivedUsdc'), value: `${formatAmount(received)} USDC` },
+        ...(settled
+          ? [
+              { label: t('amountTry'), value: `₺${formatAmount(numeric)}` },
+              { label: t('receivedUsdc'), value: `${formatAmount(received)} USDC` },
+            ]
+          : []),
         { label: t('repaidUsdc'), value: `${formatAmount(repaid)} USDC` },
         { label: t('remainingDebt'), value: `${formatAmount(Math.max(0, position.debtUsdc - repaid))} USDC` },
       ]
       if (fullRepay && withdrawAll) rows.push({ label: t('collateralBack'), value: `${formatAmount(position.collateralSol, 4)} SOL` })
-      setReceipt({ title: t('receiptRepay'), rows, links, note: t('sandboxRepayNote') })
-      addHistory(signer.address, { kind: 'repay', title: t('receiptRepay'), amount: `${formatAmount(repaid)} USDC`, detail: `₺${formatAmount(numeric)}`, links })
+      setReceipt({ title: t('receiptRepay'), rows, links, note: settled ? t('sandboxRepayNote') : t('walletRepayNote') })
+      addHistory(signer.address, { kind: 'repay', title: t('receiptRepay'), amount: `${formatAmount(repaid)} USDC`, detail: settled ? `₺${formatAmount(numeric)}` : undefined, links })
       await refresh()
     })
 
