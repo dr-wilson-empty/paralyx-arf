@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertCircle, ArrowUpRight, Check, ChevronDown, Copy, RefreshCw } from 'lucide-react'
 import { formatAmount } from '../../lib/solana'
@@ -79,6 +79,7 @@ export function AmountField({
   extra?: ReactNode
 }) {
   const { t } = useT()
+  const inputId = useId()
   const unit = symbol === 'TRY' ? 'TRY' : symbol
   const applyFraction = (fraction: number) => {
     if (max === undefined) return
@@ -88,7 +89,7 @@ export function AmountField({
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <label className="flex items-center gap-2 text-xs text-mute">
+        <label htmlFor={inputId} className="flex items-center gap-2 text-xs text-mute">
           <TokenIcon symbol={symbol} size={16} /> {label}
         </label>
         {balance !== undefined ? (
@@ -106,6 +107,7 @@ export function AmountField({
         }
       >
         <input
+          id={inputId}
           type="text"
           inputMode="decimal"
           autoFocus={autoFocus}

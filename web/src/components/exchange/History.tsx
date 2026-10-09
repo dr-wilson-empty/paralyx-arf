@@ -42,7 +42,7 @@ export function History({ address }: { address: string | null }) {
                   <Icon kind={item.kind} />
                 </span>
                 <div className="min-w-0">
-                  <div className="truncate text-ink">{item.title}</div>
+                  <div className="truncate text-ink">{t(item.kind === 'cashout' ? 'receiptCashOut' : 'receiptRepay')}</div>
                   <div className="truncate text-xs text-mute">
                     {relative(item.at, lang)}
                     {item.detail ? ` · ${item.detail}` : ''}
@@ -52,7 +52,7 @@ export function History({ address }: { address: string | null }) {
               <div className="flex shrink-0 items-center gap-2 text-right">
                 <span className="text-ink">{item.amount}</span>
                 {item.links[0] ? (
-                  <a href={item.links[0].href} target="_blank" rel="noreferrer" className="text-mute hover:text-ink" title={item.links[0].label}>
+                  <a href={item.links[0].href} target="_blank" rel="noreferrer" className="text-mute hover:text-ink" title={t('view')}>
                     <ArrowUpRight className="h-4 w-4" />
                   </a>
                 ) : null}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { NETWORK, PROGRAM_ID, SAFETY_BUFFER, SOL_DECIMALS, SOL_FEE_RESERVE, USDC_DECIMALS } from '../config'
 import type { Position } from '../lib/kamino'
 import { formatAmount, fromUnits, lamports, openLine, repayLine, requestDevnetSol, usdcUnits, WITHDRAW_ALL, type ActivityEvent } from '../lib/solana'
@@ -141,6 +141,8 @@ export function WalletCard({ signer, wallet, refresh }: Shared) {
 
 export function OpenCard({ signer, wallet, position, rate, refresh, marketStatus }: Shared) {
   const { t } = useT()
+  const collateralId = useId()
+  const borrowId = useId()
   const [collateral, setCollateral] = useState('1')
   const [borrow, setBorrow] = useState('10')
   const flow = useFlow()
@@ -178,10 +180,10 @@ export function OpenCard({ signer, wallet, position, rate, refresh, marketStatus
       <p className="mt-1 text-sm text-mute">{t('openBody')}</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <div>
-          <label className="label flex items-center gap-2">
+          <label htmlFor={collateralId} className="label flex items-center gap-2">
             <TokenIcon symbol="SOL" size={16} /> {t('collateralSol')}
           </label>
-          <input className="input" inputMode="decimal" value={collateral} onChange={(e) => setCollateral(e.target.value)} />
+          <input id={collateralId} className="input" inputMode="decimal" value={collateral} onChange={(e) => setCollateral(e.target.value)} />
           {wallet ? (
             <div className="mt-1 text-xs text-mute">
               {t('balance')}: {formatAmount(wallet.sol, 4)} SOL
@@ -189,13 +191,17 @@ export function OpenCard({ signer, wallet, position, rate, refresh, marketStatus
           ) : null}
         </div>
         <div>
-          <label className="label flex items-center gap-2">
+          <label htmlFor={borrowId} className="label flex items-center gap-2">
             <TokenIcon symbol="USDC" size={16} /> {t('borrowUsdc')}
           </label>
-          <input className="input disabled:bg-soft disabled:text-mute" inputMode="decimal" value={borrow} disabled={!canBorrow} onChange={(e) => setBorrow(e.target.value)} />
+          <input id={borrowId} className="input disabled:bg-soft disabled:text-mute" inputMode="decimal" value={borrow} disabled={!canBorrow} onChange={(e) => setBorrow(e.target.value)} />
           <div className="mt-1 text-xs text-mute">
-            {!canBorrow ? t('limitClosed') : maxBorrow !== null ? `${t('maxBorrow')} ${formatAmount(maxBorrow)} USDC` : ''}
-            {canBorrow && rate && borrowNumber > 0 ? ` · ${t('equalsTry')} ₺${formatAmount(borrowNumber * rate)}` : ''}
+            {[
+              !canBorrow ? t('limitClosed') : maxBorrow !== null ? `${t('maxBorrow')} ${formatAmount(maxBorrow)} USDC` : '',
+              canBorrow && rate && borrowNumber > 0 ? `${t('equalsTry')} ₺${formatAmount(borrowNumber * rate)}` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </div>
         </div>
       </div>
@@ -217,6 +223,7 @@ export function OpenCard({ signer, wallet, position, rate, refresh, marketStatus
 
 export function WithdrawCard({ signer, position, line, refresh }: Shared) {
   const { t } = useT()
+  const amountId = useId()
   const [amount, setAmount] = useState('')
   const [receipt, setReceipt] = useState<{ withdrawn: number; hash: string } | null>(null)
   const flow = useFlow()
@@ -256,11 +263,11 @@ export function WithdrawCard({ signer, position, line, refresh }: Shared) {
         <span className="text-ink">{formatAmount(collateral, 4)} SOL</span>
       </div>
       <div className="mt-3">
-        <label className="label flex items-center gap-2">
+        <label htmlFor={amountId} className="label flex items-center gap-2">
           <TokenIcon symbol="SOL" size={16} /> {t('collateralSol')}
         </label>
         <div className="flex gap-2">
-          <input className="input" inputMode="decimal" value={amount} placeholder={formatAmount(collateral, 4)} onChange={(e) => setAmount(e.target.value)} disabled={flow.busy} />
+          <input id={amountId} className="input" inputMode="decimal" value={amount} placeholder={formatAmount(collateral, 4)} onChange={(e) => setAmount(e.target.value)} disabled={flow.busy} />
           <button type="button" className="chip shrink-0" onClick={() => setAmount(String(collateral))}>
             {t('withdrawAll')}
           </button>
