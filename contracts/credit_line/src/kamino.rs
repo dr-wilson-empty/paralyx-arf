@@ -119,6 +119,10 @@ fn obligation_reserves(obligation: &AccountInfo) -> Result<(Vec<Pubkey>, Vec<Pub
     Ok((deposits, borrows))
 }
 
+pub fn has_borrows(obligation: &AccountInfo) -> Result<bool> {
+    Ok(!obligation_reserves(obligation)?.1.is_empty())
+}
+
 fn pick<'info>(key: &Pubkey, collateral: &Side<'info>, debt: &Side<'info>) -> Result<AccountInfo<'info>> {
     if *key == collateral.reserve.key() {
         Ok(collateral.reserve.clone())

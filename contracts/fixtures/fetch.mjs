@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,7 +25,7 @@ async function dumpProgram(programId, file) {
   const padded = Buffer.from(data.value.data[0], 'base64').subarray(45)
   const elf = padded.subarray(0, Number(padded.readBigUInt64LE(0x28)) + padded.readUInt16LE(0x3a) * padded.readUInt16LE(0x3c))
   writeFileSync(join(out, file), elf)
-  return { programId, programData: dataAddress, bytes: elf.length }
+  return { programId, programData: dataAddress, bytes: elf.length, sha256: createHash('sha256').update(elf).digest('hex') }
 }
 
 const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
@@ -59,6 +60,6 @@ const accounts = spec.accounts.map((entry, index) => {
   const account = snapshot.value[index]
   return { name: entry.name, address: entry.address, lamports: account.lamports, owner: account.owner, executable: account.executable, data: account.data[0] }
 })
-const unixTimestamp = Math.floor(Date.now() / 1000)
+const unixTimestamp = (await call('getBlockTime', [snapshot.context.slot]).catch(() => null)) ?? Math.floor(Date.now() / 1000)
 writeFileSync(join(out, 'snapshot.json'), JSON.stringify({ rpc, slot: snapshot.context.slot, unixTimestamp, programs, accounts }, null, 1))
-console.log(`fixtures written at slot ${snapshot.context.slot}: ${accounts.length} accounts, ${programs.map((p) => `${p.name} ${p.bytes} bytes`).join(', ')}`)
+console.log(`fixtures written at slot ${snapshot.context.slot}: ${accounts.length} accounts, ${programs.map((p) => `${p.name} ${p.bytes} bytes sha256 ${p.sha256}`).join(', ')}`)

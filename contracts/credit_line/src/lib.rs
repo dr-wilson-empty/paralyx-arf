@@ -10,6 +10,7 @@ declare_id!("PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr");
 pub const CONFIG_SEED: &[u8] = b"config";
 pub const LINE_SEED: &[u8] = b"line";
 pub const MAX_REFERENCE_LEN: usize = 64;
+pub const STATE_VERSION: u8 = 1;
 pub const INSTRUCTIONS_SYSVAR: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
 
 #[program]
@@ -31,12 +32,15 @@ pub mod credit_line {
             debt_reserve: ctx.accounts.debt_reserve.key(),
             line_count: 0,
             bump: ctx.bumps.config,
+            version: STATE_VERSION,
+            reserved: [0; 64],
         });
         Ok(())
     }
 
     pub fn open_line(ctx: Context<OpenLine>, collateral_amount: u64, borrow_amount: u64) -> Result<()> {
         require!(collateral_amount > 0 || borrow_amount > 0, ParalyxError::EmptyRequest);
+        require!(borrow_amount != u64::MAX, ParalyxError::UnboundedAmount);
         let accounts = &ctx.accounts;
         let k = accounts.kamino();
         kamino::check_obligation(&k)?;
@@ -68,6 +72,7 @@ pub mod credit_line {
             line.user = user;
             line.opened_at = now;
             line.bump = ctx.bumps.line;
+            line.version = STATE_VERSION;
             let config = &mut ctx.accounts.config;
             config.line_count = config.line_count.checked_add(1).ok_or(ParalyxError::AmountOverflow)?;
         }
@@ -78,8 +83,8 @@ pub mod credit_line {
         Ok(())
     }
 
-    pub fn repay_line(ctx: Context<RepayLine>, repay_amount: u64, withdraw_collateral: u64) -> Result<()> {
-        require!(repay_amount > 0 || withdraw_collateral > 0, ParalyxError::EmptyRequest);
+    pub fn repay_line(ctx: Context<RepayLine>, repay_amount: u64, withdraw_ctokens: u64) -> Result<()> {
+        require!(repay_amount > 0 || withdraw_ctokens > 0, ParalyxError::EmptyRequest);
         let mut line = read_line(&ctx.accounts.line)?;
         let accounts = &ctx.accounts;
         let k = accounts.kamino();
@@ -97,10 +102,11 @@ pub mod credit_line {
             repaid = before.saturating_sub(kamino::token_amount(&debt.user_token)?);
         }
         let mut withdrawn = 0u64;
-        if withdraw_collateral > 0 {
+        if withdraw_ctokens > 0 {
+            require!(withdraw_ctokens != u64::MAX || !kamino::has_borrows(&k.obligation)?, ParalyxError::UnboundedAmount);
             kamino::refresh(&k, &collateral, &debt)?;
             let before = kamino::token_amount(&collateral.user_token)?;
-            kamino::withdraw(&k, &collateral, &ctoken_mint, &ctoken_supply, withdraw_collateral)?;
+            kamino::withdraw(&k, &collateral, &ctoken_mint, &ctoken_supply, withdraw_ctokens)?;
             withdrawn = kamino::token_amount(&collateral.user_token)?.saturating_sub(before);
         }
 
@@ -154,6 +160,8 @@ pub struct Config {
     pub debt_reserve: Pubkey,
     pub line_count: u64,
     pub bump: u8,
+    pub version: u8,
+    pub reserved: [u8; 64],
 }
 
 #[account]
@@ -169,6 +177,8 @@ pub struct Line {
     pub payouts: u32,
     pub payout_try: u64,
     pub bump: u8,
+    pub version: u8,
+    pub reserved: [u8; 64],
 }
 
 #[event]
@@ -192,7 +202,7 @@ pub struct PayoutRecorded {
     pub try_amount: u64,
 }
 
-#[error_code]
+#[error_code(offset = 7000)]
 pub enum ParalyxError {
     #[msg("Both amounts are zero")]
     EmptyRequest,
@@ -212,6 +222,8 @@ pub enum ParalyxError {
     NotUpgradeAuthority,
     #[msg("Amount overflow")]
     AmountOverflow,
+    #[msg("u64::MAX is Kamino's max allowed amount: borrow an exact amount, withdraw all only once the debt is repaid")]
+    UnboundedAmount,
 }
 
 #[derive(Accounts)]

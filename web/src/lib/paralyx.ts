@@ -419,11 +419,11 @@ export function openLine(d: Deployment, user: PublicKey, collateral: bigint, bor
   })
 }
 
-export function repayLine(d: Deployment, user: PublicKey, repay: bigint, withdrawCollateral: bigint): TransactionInstruction {
+export function repayLine(d: Deployment, user: PublicKey, repay: bigint, withdrawCtokens: bigint): TransactionInstruction {
   return new TransactionInstruction({
     programId: key(d.program),
     keys: lineKeys(d, user, false),
-    data: Buffer.concat([Buffer.from(IX.repayLine), u64(repay), u64(withdrawCollateral)]),
+    data: Buffer.concat([Buffer.from(IX.repayLine), u64(repay), u64(withdrawCtokens)]),
   })
 }
 
@@ -508,11 +508,11 @@ export function openLineInstructions(d: Deployment, user: PublicKey, collateral:
   return instructions
 }
 
-export function repayLineInstructions(d: Deployment, user: PublicKey, repay: bigint, withdrawCollateral: bigint): TransactionInstruction[] {
+export function repayLineInstructions(d: Deployment, user: PublicKey, repay: bigint, withdrawCtokens: bigint): TransactionInstruction[] {
   const instructions = [...computeBudget(1_000_000, 50_000)]
-  if (withdrawCollateral > 0n) instructions.push(createAtaIdempotent(user, user, SOL_MINT))
+  if (withdrawCtokens > 0n) instructions.push(createAtaIdempotent(user, user, SOL_MINT))
   instructions.push(createAtaIdempotent(user, user, d.debt.mint, d.debt.tokenProgram))
-  instructions.push(repayLine(d, user, repay, withdrawCollateral))
-  if (withdrawCollateral > 0n) instructions.push(closeTokenAccount(ataAddress(user, SOL_MINT), user))
+  instructions.push(repayLine(d, user, repay, withdrawCtokens))
+  if (withdrawCtokens > 0n) instructions.push(closeTokenAccount(ataAddress(user, SOL_MINT), user))
   return instructions
 }

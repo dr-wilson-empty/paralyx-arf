@@ -340,7 +340,7 @@ fn repay_ix(user: &Pubkey, repay: u64, withdraw: u64) -> Instruction {
     Instruction {
         program_id: credit_line::ID,
         accounts: accounts.to_account_metas(None),
-        data: credit_line::instruction::RepayLine { repay_amount: repay, withdraw_collateral: withdraw }.data(),
+        data: credit_line::instruction::RepayLine { repay_amount: repay, withdraw_ctokens: withdraw }.data(),
     }
 }
 
@@ -402,6 +402,7 @@ fn open_line_deposits_sol_and_borrows_usdc_on_kamino() {
 
     let line: Line = read(&world.svm, &p.line).unwrap();
     assert_eq!(line.user, user);
+    assert_eq!(line.version, credit_line::STATE_VERSION);
     assert!(SOL - line.collateral_in <= 1, "kamino rounds the deposit down by at most one lamport, got {}", line.collateral_in);
     assert_eq!(line.borrowed, 20 * USDC);
     assert_eq!(line.opened_at, world.start.unix_timestamp);
@@ -441,13 +442,13 @@ fn open_line_rejects_empty_requests_and_foreign_reserves() {
     let mut world = ready();
     let user = world.user.pubkey();
     let before = obligation_position(&world.svm, &user);
-    assert_eq!(run(&mut world, open_ix(&user, 0, 0)).unwrap_err().0, 6000);
+    assert_eq!(run(&mut world, open_ix(&user, 0, 0)).unwrap_err().0, 7000);
     let swapped = Instruction {
         program_id: credit_line::ID,
         accounts: line_accounts(&user, USDC_RESERVE, SOL_RESERVE).to_account_metas(None),
         data: credit_line::instruction::OpenLine { collateral_amount: SOL, borrow_amount: 0 }.data(),
     };
-    assert_eq!(run(&mut world, swapped).unwrap_err().0, 6003);
+    assert_eq!(run(&mut world, swapped).unwrap_err().0, 7003);
     assert_eq!(obligation_position(&world.svm, &user), before);
     assert!(read::<Line>(&world.svm, &pdas(&user).line).is_none());
 }
@@ -482,7 +483,7 @@ fn repay_line_repays_debt_and_withdraws_collateral() {
     assert!(line.collateral_out <= line.collateral_in && line.collateral_in - line.collateral_out <= 2, "in {} out {}", line.collateral_in, line.collateral_out);
     assert_eq!(balance(&world.svm, &p.user_usdc), 5 * USDC - line.repaid);
     assert_eq!(balance(&world.svm, &p.user_sol), 5 * SOL - line.collateral_in + line.collateral_out);
-    assert!(world.svm.get_account(&p.obligation).map_or(true, |account| account.lamports == 0), "kamino closes the emptied obligation and refunds its rent");
+    assert!(world.svm.get_account(&p.obligation).is_none_or(|account| account.lamports == 0), "kamino closes the emptied obligation and refunds its rent");
     let repaid = events::<LineRepaid>(&meta);
     assert_eq!((repaid[0].repay_amount, repaid[0].withdraw_collateral), (line.repaid, line.collateral_out));
 }
@@ -492,7 +493,7 @@ fn repay_without_line_fails() {
     let mut world = ready();
     let user = world.user.pubkey();
     let before = obligation_position(&world.svm, &user);
-    assert_eq!(run(&mut world, repay_ix(&user, USDC, 0)).unwrap_err().0, 6001);
+    assert_eq!(run(&mut world, repay_ix(&user, USDC, 0)).unwrap_err().0, 7001);
     assert_eq!(obligation_position(&world.svm, &user), before);
 }
 
@@ -500,16 +501,16 @@ fn repay_without_line_fails() {
 fn record_payout_updates_line_and_requires_line() {
     let mut world = ready();
     let user = world.user.pubkey();
-    assert_eq!(run(&mut world, payout_ix(&user, "SBX-0123", 250_00)).unwrap_err().0, 6001);
+    assert_eq!(run(&mut world, payout_ix(&user, "SBX-0123", 25_000)).unwrap_err().0, 7001);
     run(&mut world, open_ix(&user, SOL, 4 * USDC)).unwrap_or_else(|(code, logs)| panic!("open failed {code}: {logs:#?}"));
-    let meta = run(&mut world, payout_ix(&user, "SBX-0123", 250_00)).unwrap_or_else(|(code, logs)| panic!("payout failed {code}: {logs:#?}"));
+    let meta = run(&mut world, payout_ix(&user, "SBX-0123", 25_000)).unwrap_or_else(|(code, logs)| panic!("payout failed {code}: {logs:#?}"));
     let line: Line = read(&world.svm, &pdas(&user).line).unwrap();
     assert_eq!(line.payouts, 1);
-    assert_eq!(line.payout_try, 250_00);
+    assert_eq!(line.payout_try, 25_000);
     let recorded = events::<PayoutRecorded>(&meta);
-    assert_eq!((recorded[0].rail_tx_id.as_str(), recorded[0].try_amount), ("SBX-0123", 250_00));
-    assert_eq!(run(&mut world, payout_ix(&user, "", 1)).unwrap_err().0, 6006);
-    assert_eq!(run(&mut world, payout_ix(&user, &"x".repeat(65), 1)).unwrap_err().0, 6006);
+    assert_eq!((recorded[0].rail_tx_id.as_str(), recorded[0].try_amount), ("SBX-0123", 25_000));
+    assert_eq!(run(&mut world, payout_ix(&user, "", 1)).unwrap_err().0, 7006);
+    assert_eq!(run(&mut world, payout_ix(&user, &"x".repeat(65), 1)).unwrap_err().0, 7006);
 }
 
 #[test]
@@ -523,6 +524,7 @@ fn config_and_positions_are_client_side_reads() {
     assert_eq!(config.lending_market, MARKET);
     assert_eq!(config.collateral_reserve, SOL_RESERVE);
     assert_eq!(config.debt_reserve, USDC_RESERVE);
+    assert_eq!(config.version, credit_line::STATE_VERSION);
     run(&mut world, open_ix(&user, 2 * SOL, 10 * USDC)).unwrap_or_else(|(code, logs)| panic!("open failed {code}: {logs:#?}"));
     let (deposit_reserve, deposited, borrow_reserve, borrowed_sf) = obligation_position(&world.svm, &user);
     assert_eq!((deposit_reserve, borrow_reserve), (SOL_RESERVE, USDC_RESERVE));
@@ -538,8 +540,109 @@ fn initialize_requires_upgrade_authority() {
     let stranger = Keypair::new();
     world.svm.airdrop(&stranger.pubkey(), SOL).unwrap();
     let failure = send(&mut world.svm, &stranger, &[initialize_ix(&stranger.pubkey(), SOL_RESERVE, USDC_RESERVE)]).unwrap_err();
-    assert_eq!(failure.0, 6007);
+    assert_eq!(failure.0, 7007);
     let admin = world.admin.insecure_clone();
     let crossed = send(&mut world.svm, &admin, &[initialize_ix(&admin.pubkey(), SOL_RESERVE, SOL_RESERVE)]).unwrap_err();
-    assert_eq!(crossed.0, 6003);
+    assert_eq!(crossed.0, 7003);
+}
+
+const UNBOUNDED: u32 = 7009;
+
+fn fund_stranger(world: &mut World) -> Keypair {
+    let stranger = Keypair::new();
+    world.svm.airdrop(&stranger.pubkey(), 5 * SOL).unwrap();
+    let p = pdas(&stranger.pubkey());
+    set_token(&mut world.svm, p.user_sol, &SOL_MINT, &stranger.pubkey(), 2 * SOL);
+    set_token(&mut world.svm, p.user_usdc, &USDC_MINT, &stranger.pubkey(), 5 * USDC);
+    stranger
+}
+
+#[test]
+fn open_line_rejects_unbounded_borrow() {
+    let mut world = ready();
+    let user = world.user.pubkey();
+    let before = obligation_position(&world.svm, &user);
+    assert_eq!(run(&mut world, open_ix(&user, SOL, u64::MAX)).unwrap_err().0, UNBOUNDED);
+    assert_eq!(obligation_position(&world.svm, &user), before);
+    assert!(read::<Line>(&world.svm, &pdas(&user).line).is_none());
+}
+
+#[test]
+fn repay_line_withdraws_exact_ctokens_and_rejects_unbounded_withdraw_in_debt() {
+    let mut world = ready();
+    let user = world.user.pubkey();
+    let p = pdas(&user);
+    run(&mut world, open_ix(&user, SOL, 4 * USDC)).unwrap_or_else(|(code, logs)| panic!("open failed {code}: {logs:#?}"));
+    assert_eq!(run(&mut world, repay_ix(&user, 0, u64::MAX)).unwrap_err().0, UNBOUNDED);
+    assert_eq!(run(&mut world, repay_ix(&user, USDC, u64::MAX)).unwrap_err().0, UNBOUNDED);
+
+    let (_, ctokens, _, _) = obligation_position(&world.svm, &user);
+    let sol_before = balance(&world.svm, &p.user_sol);
+    let meta = run(&mut world, repay_ix(&user, 0, ctokens / 10)).unwrap_or_else(|(code, logs)| panic!("partial withdraw failed {code}: {logs:#?}"));
+    let line: Line = read(&world.svm, &p.line).unwrap();
+    assert_eq!(line.repaid, 0);
+    assert!(line.collateral_out <= SOL / 10 && SOL / 10 - line.collateral_out <= 10, "withdrew {} lamports for a tenth of the cTokens", line.collateral_out);
+    assert_eq!(balance(&world.svm, &p.user_sol), sol_before + line.collateral_out);
+    let (deposit_reserve, remaining, borrow_reserve, borrowed_sf) = obligation_position(&world.svm, &user);
+    assert_eq!((deposit_reserve, remaining), (SOL_RESERVE, ctokens - ctokens / 10));
+    assert!(borrow_reserve == USDC_RESERVE && borrowed_sf > 0);
+    let repaid = events::<LineRepaid>(&meta);
+    assert_eq!((repaid[0].repay_amount, repaid[0].withdraw_collateral), (0, line.collateral_out));
+}
+
+#[test]
+fn open_line_rejects_foreign_and_referred_obligations() {
+    let mut world = ready();
+    let victim = world.user.pubkey();
+    run(&mut world, open_ix(&victim, SOL, 0)).unwrap_or_else(|(code, logs)| panic!("open failed {code}: {logs:#?}"));
+    let victim_position = obligation_position(&world.svm, &victim);
+
+    let attacker = fund_stranger(&mut world);
+    let mut foreign = line_accounts(&attacker.pubkey(), SOL_RESERVE, USDC_RESERVE);
+    foreign.obligation = pdas(&victim).obligation;
+    let ix = Instruction {
+        program_id: credit_line::ID,
+        accounts: foreign.to_account_metas(None),
+        data: credit_line::instruction::OpenLine { collateral_amount: 0, borrow_amount: USDC }.data(),
+    };
+    assert_eq!(send(&mut world.svm, &attacker, &[budget(), ix]).unwrap_err().0, 7004);
+    assert_eq!(obligation_position(&world.svm, &victim), victim_position);
+    assert_eq!(balance(&world.svm, &pdas(&attacker.pubkey()).user_usdc), 5 * USDC);
+
+    let obligation = pdas(&victim).obligation;
+    let mut account = world.svm.get_account(&obligation).unwrap();
+    account.data[2288..2320].copy_from_slice(Pubkey::new_unique().as_ref());
+    world.svm.set_account(obligation, account).unwrap();
+    assert_eq!(run(&mut world, open_ix(&victim, 0, USDC)).unwrap_err().0, 7005);
+}
+
+#[test]
+fn line_seeds_bind_payouts_and_repayments_to_the_signer() {
+    let mut world = ready();
+    let victim = world.user.pubkey();
+    run(&mut world, open_ix(&victim, SOL, 4 * USDC)).unwrap_or_else(|(code, logs)| panic!("open failed {code}: {logs:#?}"));
+    let victim_line = pdas(&victim).line;
+    let before = world.svm.get_account(&victim_line).unwrap().data;
+
+    let attacker = fund_stranger(&mut world);
+    let seeds = anchor_lang::error::ErrorCode::ConstraintSeeds as u32;
+    let mut payout = payout_ix(&attacker.pubkey(), "SBX-FAKE", 100_000);
+    payout.accounts[1] = AccountMeta::new(victim_line, false);
+    assert_eq!(send(&mut world.svm, &attacker, &[budget(), payout]).unwrap_err().0, seeds);
+    let mut repay = repay_ix(&attacker.pubkey(), USDC, 0);
+    repay.accounts[2] = AccountMeta::new(victim_line, false);
+    assert_eq!(send(&mut world.svm, &attacker, &[budget(), repay]).unwrap_err().0, seeds);
+    assert_eq!(world.svm.get_account(&victim_line).unwrap().data, before);
+}
+
+#[test]
+fn initialize_rejects_reserves_of_another_market() {
+    let mut world = load();
+    let mut reserve = world.svm.get_account(&SOL_RESERVE).unwrap();
+    reserve.data[32..64].copy_from_slice(Pubkey::new_unique().as_ref());
+    let foreign = Pubkey::new_unique();
+    world.svm.set_account(foreign, reserve).unwrap();
+    let admin = world.admin.insecure_clone();
+    assert_eq!(send(&mut world.svm, &admin, &[initialize_ix(&admin.pubkey(), foreign, USDC_RESERVE)]).unwrap_err().0, 7003);
+    assert!(world.svm.get_account(&pdas(&admin.pubkey()).config).is_none_or(|account| account.data.is_empty()));
 }
