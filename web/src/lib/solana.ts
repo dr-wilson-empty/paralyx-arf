@@ -169,9 +169,9 @@ export async function openLine(signer: Signer, collateralLamports: bigint, borro
   return send(signer, openLineInstructions(d, signer.publicKey, collateralLamports, borrowUnits, existing))
 }
 
-export async function repayLine(signer: Signer, repayUnits: bigint, withdrawCollateral: bigint): Promise<string> {
+export async function repayLine(signer: Signer, repayUnits: bigint, withdrawCtokens: bigint): Promise<string> {
   const d = await getDeployment()
-  return send(signer, repayLineInstructions(d, signer.publicKey, repayUnits, withdrawCollateral))
+  return send(signer, repayLineInstructions(d, signer.publicKey, repayUnits, withdrawCtokens))
 }
 
 export const REPAY_ALL = U64_MAX
@@ -196,7 +196,12 @@ export async function payToRail(signer: Signer, treasury: string, usdc: bigint, 
 
 export async function requestDevnetSol(address: string): Promise<string> {
   if (!NETWORK.faucet) throw new Error('faucet is devnet only')
-  const signature = await connection.requestAirdrop(new PublicKey(address), LAMPORTS_PER_SOL)
+  let signature: string
+  try {
+    signature = await connection.requestAirdrop(new PublicKey(address), LAMPORTS_PER_SOL)
+  } catch (error) {
+    throw new Error(/429|limit|run dry/i.test(String(error)) ? 'faucet limit reached' : String(error))
+  }
   await connection.confirmTransaction(signature, 'confirmed')
   return signature
 }
