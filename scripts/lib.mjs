@@ -9,6 +9,7 @@ import {
   TransactionMessage,
   VersionedTransaction,
   bs58,
+  confirmSignature,
   decodeEvent,
   decodeReserve,
 } from '../web/src/lib/cli.ts'
@@ -54,8 +55,7 @@ export async function send(connection, payer, instructions, tables = [], signers
   const transaction = new VersionedTransaction(message)
   transaction.sign([payer, ...signers])
   const signature = await connection.sendRawTransaction(transaction.serialize(), { maxRetries: 5 })
-  const result = await connection.confirmTransaction({ signature, ...latest }, 'confirmed')
-  if (result.value.err) throw new Error(`transaction failed ${signature} ${JSON.stringify(result.value.err)}`)
+  await confirmSignature(connection, signature, latest.lastValidBlockHeight)
   return signature
 }
 

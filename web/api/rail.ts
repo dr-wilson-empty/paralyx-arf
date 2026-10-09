@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction, type ParsedInstruction, type PartiallyDecodedInstruction } from '@solana/web3.js'
+import { Connection, Keypair, PublicKey, Transaction, type ParsedInstruction, type PartiallyDecodedInstruction } from '@solana/web3.js'
 import { Account, Contract, Keypair as StellarKeypair, TransactionBuilder, rpc, scValToNative, xdr } from '@stellar/stellar-sdk'
 import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { createMemoInstruction } from '@solana/spl-memo'
@@ -259,6 +259,19 @@ async function startDeposit(e: Env, body: Json) {
   }
 }
 
+async function confirmSignature(connection: Connection, signature: string, lastValidBlockHeight: number): Promise<void> {
+  let landed = false
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const [status] = (await connection.getSignatureStatuses([signature])).value
+    if (status?.err) throw new RailError(`settlement failed on chain: ${signature}`, 502)
+    if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return
+    landed ||= status !== null
+    if (!landed && (await connection.getBlockHeight('confirmed')) > lastValidBlockHeight) throw new RailError(`settlement expired before it landed: ${signature}`, 502)
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+  throw new RailError(`settlement not confirmed in time: ${signature}`, 504)
+}
+
 async function settleDeposit(e: Env, body: Json) {
   const treasury = requireTreasury(e)
   const payload = verify(e, String(body.token), 'deposit')
@@ -277,7 +290,12 @@ async function settleDeposit(e: Env, body: Json) {
     createTransferCheckedInstruction(treasuryAta, mint, userAta, treasury.publicKey, amount, USDC_DECIMALS),
     createMemoInstruction(String(payload.id), [treasury.publicKey]),
   )
-  const signature = await sendAndConfirmTransaction(e.connection, tx, [treasury], { commitment: 'confirmed' })
+  const latest = await e.connection.getLatestBlockhash('confirmed')
+  tx.recentBlockhash = latest.blockhash
+  tx.feePayer = treasury.publicKey
+  tx.sign(treasury)
+  const signature = await e.connection.sendRawTransaction(tx.serialize(), { maxRetries: 5 })
+  await confirmSignature(e.connection, signature, latest.lastValidBlockHeight)
   return { id: payload.id, status: 'completed', sandbox: true, amountOut: Number(amount) / 10 ** USDC_DECIMALS, signature }
 }
 

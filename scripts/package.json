@@ -3,5 +3,8 @@
   "private": true,
   "type": "module",
   "version": "0.2.0",
-  "description": "Solana helpers for Paralyx; they import web/src/lib, so run npm install in web/ first"
+  "description": "Solana helpers for Paralyx; they import web/src/lib, so run npm install in web/ first",
+  "scripts": {
+    "test": "node --test"
+  }
 }

@@ -9,6 +9,7 @@ import {
   ataAddress,
   computeBudget,
   configAddress,
+  confirmSignature,
   createAtaIdempotent,
   decodeConfig,
   decodeEvent,
@@ -157,8 +158,7 @@ export async function send(signer: Signer, instructions: TransactionInstruction[
   } catch (error) {
     throw readableError(error)
   }
-  const result = await connection.confirmTransaction({ signature, ...latest }, 'confirmed')
-  if (result.value.err) throw new Error(`transaction failed on chain: ${signature}`)
+  await confirmSignature(connection, signature, latest.lastValidBlockHeight)
   return signature
 }
 
@@ -196,13 +196,14 @@ export async function payToRail(signer: Signer, treasury: string, usdc: bigint, 
 
 export async function requestDevnetSol(address: string): Promise<string> {
   if (!NETWORK.faucet) throw new Error('faucet is devnet only')
+  const { lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
   let signature: string
   try {
     signature = await connection.requestAirdrop(new PublicKey(address), LAMPORTS_PER_SOL)
   } catch (error) {
     throw new Error(/429|limit|run dry/i.test(String(error)) ? 'faucet limit reached' : String(error))
   }
-  await connection.confirmTransaction(signature, 'confirmed')
+  await confirmSignature(connection, signature, lastValidBlockHeight)
   return signature
 }
 

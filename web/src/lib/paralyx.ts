@@ -1,5 +1,5 @@
 import { Buffer } from 'buffer'
-import { ComputeBudgetProgram, PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js'
+import { ComputeBudgetProgram, PublicKey, SystemProgram, TransactionInstruction, type Connection } from '@solana/web3.js'
 
 export const KLEND_PROGRAM = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD'
 export const FARMS_PROGRAM = 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr'
@@ -515,4 +515,17 @@ export function repayLineInstructions(d: Deployment, user: PublicKey, repay: big
   instructions.push(repayLine(d, user, repay, withdrawCtokens))
   if (withdrawCtokens > 0n) instructions.push(closeTokenAccount(ataAddress(user, SOL_MINT), user))
   return instructions
+}
+
+export async function confirmSignature(connection: Connection, signature: string, lastValidBlockHeight: number): Promise<void> {
+  let landed = false
+  for (let attempt = 0; attempt < 120; attempt++) {
+    const [status] = (await connection.getSignatureStatuses([signature])).value
+    if (status?.err) throw new Error(`transaction failed on chain: ${signature}`)
+    if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return
+    landed ||= status !== null
+    if (!landed && (await connection.getBlockHeight('confirmed')) > lastValidBlockHeight) throw new Error(`transaction expired before it landed: ${signature}`)
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+  }
+  throw new Error(`transaction not confirmed in time: ${signature}`)
 }
