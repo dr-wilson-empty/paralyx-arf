@@ -1,0 +1,24 @@
+skip_local_validator = true
+
+[toolchain]
+anchor_version = "1.2.0"
+
+[features]
+resolution = true
+skip-lint = true
+
+[programs.localnet]
+credit_line = "PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr"
+
+[programs.devnet]
+credit_line = "PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr"
+
+[workspace]
+members = ["credit_line"]
+
+[provider]
+cluster = "localnet"
+wallet = "../.keys/deployer.json"
+
+[scripts]
+test = "node fixtures/fetch.mjs && cargo test --package credit_line"

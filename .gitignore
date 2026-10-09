@@ -8,3 +8,5 @@ dist/
 *.log
 .vercel/
 .stellar/
+.keys/
+contracts/fixtures/mainnet/

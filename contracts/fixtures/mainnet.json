@@ -1,0 +1,24 @@
+{
+  "market": "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF",
+  "programs": [
+    { "name": "klend", "address": "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD", "file": "klend.so" },
+    { "name": "farms", "address": "FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr", "file": "farms.so" }
+  ],
+  "accounts": [
+    { "name": "lending_market", "address": "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF" },
+    { "name": "sol_reserve", "address": "d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q" },
+    { "name": "sol_mint", "address": "So11111111111111111111111111111111111111112" },
+    { "name": "sol_supply", "address": "GafNuUXj9rxGLn4y79dPu6MHSuPWeJR6UtTWuexpGh3U" },
+    { "name": "sol_fee_vault", "address": "3JNof8s453bwG5UqiXBLJc77NRQXezYYEBbk3fqnoKph" },
+    { "name": "sol_ctoken_mint", "address": "2UywZrUdyqs5vDchy7fKQJKau2RVyuzBev2XKGPDSiX1" },
+    { "name": "sol_ctoken_supply", "address": "8NXMyRD91p3nof61BTkJvrfpGTASHygz1cUvc3HvwyGS" },
+    { "name": "sol_collateral_farm", "address": "955xWFhSDcDiUgUr4sBRtCpTLiMd4H5uZLAmgtP3R3sX" },
+    { "name": "usdc_reserve", "address": "D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59" },
+    { "name": "usdc_mint", "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" },
+    { "name": "usdc_supply", "address": "Bgq7trRgVMeq33yt235zM2onQ4bRDBsY5EWiTetF4qw6" },
+    { "name": "usdc_fee_vault", "address": "BbDUrk1bVtSixgQsPLBJFZEF7mwGstnD5joA1WzYvYFX" },
+    { "name": "usdc_ctoken_mint", "address": "B8V6WVjPxW1UGwVDfxH2d2r8SyT4cqn7dQRK6XneVa7D" },
+    { "name": "usdc_ctoken_supply", "address": "3DzjXRfxRm6iejfyyMynR4tScddaanrePJ1NJU2XnPPL" },
+    { "name": "scope_prices", "address": "3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH" }
+  ]
+}
