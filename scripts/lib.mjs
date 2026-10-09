@@ -8,10 +8,9 @@ import {
   PublicKey,
   TransactionMessage,
   VersionedTransaction,
-  bs58,
   confirmSignature,
-  decodeEvent,
   decodeReserve,
+  eventsFromTransaction,
 } from '../web/src/lib/cli.ts'
 
 export * from '../web/src/lib/cli.ts'
@@ -61,15 +60,7 @@ export async function send(connection, payer, instructions, tables = [], signers
 
 export async function events(connection, net, signature) {
   const transaction = await connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-  const found = []
-  for (const group of transaction?.meta?.innerInstructions ?? []) {
-    for (const instruction of group.instructions) {
-      if (instruction.programId.toBase58() !== net.program || !('data' in instruction)) continue
-      const decoded = decodeEvent(bs58.decode(instruction.data))
-      if (decoded) found.push({ ...decoded, signature, slot: transaction.slot, blockTime: transaction.blockTime })
-    }
-  }
-  return found
+  return eventsFromTransaction(transaction, net.program)
 }
 
 export function explorer(net, signature) {

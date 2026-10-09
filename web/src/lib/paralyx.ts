@@ -1,5 +1,6 @@
 import { Buffer } from 'buffer'
-import { ComputeBudgetProgram, PublicKey, SystemProgram, TransactionInstruction, type Connection } from '@solana/web3.js'
+import bs58 from 'bs58'
+import { ComputeBudgetProgram, PublicKey, SystemProgram, TransactionInstruction, type Connection, type ParsedTransactionWithMeta } from '@solana/web3.js'
 
 export const KLEND_PROGRAM = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD'
 export const FARMS_PROGRAM = 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr'
@@ -248,6 +249,20 @@ export function decodeEvent(data: Uint8Array): LineEvent | null {
     return { kind: 'payout', user, a: v.getBigUint64(36 + length, true), b: 0n, railTxId }
   }
   return null
+}
+
+export function eventsFromTransaction(transaction: ParsedTransactionWithMeta | null, programId: string): (LineEvent & { signature: string; slot: number; blockTime: number | null })[] {
+  if (!transaction || transaction.meta?.err) return []
+  const signature = transaction.transaction.signatures[0]
+  const found: (LineEvent & { signature: string; slot: number; blockTime: number | null })[] = []
+  for (const group of transaction.meta?.innerInstructions ?? []) {
+    for (const instruction of group.instructions) {
+      if (instruction.programId.toBase58() !== programId || !('data' in instruction)) continue
+      const decoded = decodeEvent(bs58.decode(instruction.data))
+      if (decoded) found.push({ ...decoded, signature, slot: transaction.slot, blockTime: transaction.blockTime ?? null })
+    }
+  }
+  return found
 }
 
 function meta(pubkey: string | PublicKey, isWritable = false, isSigner = false) {

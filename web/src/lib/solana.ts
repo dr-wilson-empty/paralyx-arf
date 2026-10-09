@@ -1,4 +1,3 @@
-import bs58 from 'bs58'
 import { Connection, LAMPORTS_PER_SOL, PublicKey, TransactionMessage, VersionedTransaction, type AddressLookupTableAccount, type TransactionInstruction } from '@solana/web3.js'
 import { NETWORK, NETWORK_ID, PROGRAM_ID, SOL_DECIMALS, USDC_DECIMALS } from '../config'
 import {
@@ -12,7 +11,7 @@ import {
   confirmSignature,
   createAtaIdempotent,
   decodeConfig,
-  decodeEvent,
+  eventsFromTransaction,
   decodeLine,
   decodeMarket,
   decodeReserve,
@@ -212,7 +211,7 @@ interface EventLog {
   events: (Omit<ActivityEvent, 'a' | 'b'> & { a: string; b: string })[]
 }
 
-const EVENT_LOG_KEY = `paralyx:${NETWORK_ID}:eventlog:${PROGRAM_ID}`
+const EVENT_LOG_KEY = `paralyx:${NETWORK_ID}:eventlog:v2:${PROGRAM_ID}`
 const MAX_LOGGED_EVENTS = 600
 
 function readEventLog(): { newest: string | null; events: ActivityEvent[] } {
@@ -235,24 +234,11 @@ function writeEventLog(newest: string | null, events: ActivityEvent[]): void {
   }
 }
 
-function eventsIn(signature: string, slot: number, blockTime: number | null, transaction: Awaited<ReturnType<Connection['getParsedTransactions']>>[number]): ActivityEvent[] {
-  if (!transaction || transaction.meta?.err) return []
-  const found: ActivityEvent[] = []
-  for (const group of transaction.meta?.innerInstructions ?? []) {
-    for (const instruction of group.instructions) {
-      if (instruction.programId.toBase58() !== PROGRAM_ID || !('data' in instruction)) continue
-      const decoded = decodeEvent(bs58.decode(instruction.data))
-      if (decoded) found.push({ ...decoded, slot, closedAt: (blockTime ?? 0) * 1000, txHash: signature })
-    }
-  }
-  return found
-}
-
 export async function getActivity(): Promise<ActivityEvent[]> {
   if (!PROGRAM_ID) return []
   const program = new PublicKey(PROGRAM_ID)
   const log = readEventLog()
-  const fresh: { signature: string; slot: number; blockTime?: number | null }[] = []
+  const fresh: { signature: string }[] = []
   let before: string | undefined
   for (let page = 0; page < 10; page += 1) {
     const batch = await connection.getSignaturesForAddress(program, { before, until: log.newest ?? undefined, limit: 1000 })
@@ -265,7 +251,9 @@ export async function getActivity(): Promise<ActivityEvent[]> {
   for (let index = 0; index < fresh.length; index += 25) {
     const chunk = fresh.slice(index, index + 25)
     const transactions = await connection.getParsedTransactions(chunk.map((entry) => entry.signature), { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-    chunk.forEach((entry, position) => decoded.push(...eventsIn(entry.signature, entry.slot, entry.blockTime ?? null, transactions[position])))
+    for (const transaction of transactions) {
+      for (const { signature, blockTime, ...event } of eventsFromTransaction(transaction, PROGRAM_ID)) decoded.push({ ...event, closedAt: (blockTime ?? 0) * 1000, txHash: signature })
+    }
   }
   const seen = new Set(log.events.map((event) => `${event.txHash}:${event.kind}`))
   const merged = [...decoded.filter((event) => !seen.has(`${event.txHash}:${event.kind}`)), ...log.events]
