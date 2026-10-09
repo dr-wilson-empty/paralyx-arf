@@ -7,7 +7,7 @@ import { MotionButton } from '../components/MotionButton'
 import { KaminoMark, TokenIcon } from '../components/TokenIcon'
 import { hourlyBuckets, TrendCard } from '../components/TrendCard'
 import { useCached } from '../lib/store'
-import { HAS_SANDBOX_RAIL, IS_MAINNET } from '../config'
+import { HAS_SANDBOX_RAIL, IS_MAINNET, PROGRAM_ID } from '../config'
 import { useT } from '../lib/i18n'
 import { useLivePrices } from '../lib/prices'
 import { getLineCount } from '../lib/solana'
@@ -21,7 +21,7 @@ export function Dashboard() {
   const navigate = useNavigate()
   const live = useLivePrices()
   const overview = useCached('overview', () => import('../lib/kamino').then((module) => module.getMarketOverview()), { ttl: 60_000, persist: true, refreshMs: 60_000 }).data ?? null
-  const lineCount = useCached('lineCount', getLineCount, { ttl: 30_000, persist: true, refreshMs: 30_000 }).data ?? null
+  const lineCount = useCached(PROGRAM_ID ? 'lineCount' : null, getLineCount, { ttl: 30_000, persist: true, refreshMs: 30_000 }).data ?? null
 
   const lineBuckets = useMemo(
     () => hourlyBuckets(shared.allEvents.filter((event) => event.kind === 'opened').map((event) => ({ closedAt: event.closedAt, value: 1 }))),
