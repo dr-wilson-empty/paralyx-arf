@@ -8,7 +8,6 @@ export interface Network {
   rpcUrl: string
   explorerCluster: string
   program: string
-  deploySlot: number
   market: string
   marketName: string
   collateralReserve: string
@@ -27,13 +26,12 @@ export const NETWORK_DATA: Record<NetworkId, Network> = {
     rpcUrl: 'https://api.devnet.solana.com',
     explorerCluster: '?cluster=devnet',
     program: 'PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr',
-    deploySlot: 0,
     market: '4GiGCkrwHphwrsG8imKSHhjTtmbjorqYrYwMsRtBu77Z',
     marketName: 'Kamino Lend · devnet SOL/USDC',
     collateralReserve: '4yh877FXQrfGWLvvEV2QXNUQh4gBN4Q7gcM7Fz4uAnUs',
     debtReserve: 'DJ8gPwXaEX2T8ZJGwZNJc9vL6iwrUUyUrwzeSgjD8RHH',
     usdcMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
-    lookupTable: null,
+    lookupTable: '65qPaimB5uhZ1TADzMY2wwvgqnZbBoNdFQsYcBTFEzLK',
     pythSolUsd: '7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE',
     rail: 'sandbox',
     faucet: true,
@@ -44,7 +42,6 @@ export const NETWORK_DATA: Record<NetworkId, Network> = {
     rpcUrl: 'https://solana-rpc.publicnode.com',
     explorerCluster: '',
     program: '',
-    deploySlot: 0,
     market: '7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF',
     marketName: 'Kamino Lend · Main Market',
     collateralReserve: 'd4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q',

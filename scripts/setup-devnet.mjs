@@ -35,7 +35,8 @@ if (config) {
 }
 
 if (!net.lookupTable || process.argv.includes('--new-lut')) {
-  const recentSlot = await connection.getSlot('finalized')
+  const finalized = await connection.getSlot('finalized')
+  const recentSlot = (await connection.getBlocks(finalized - 16, finalized - 8, 'finalized')).at(-1) ?? finalized
   const [create, table] = AddressLookupTableProgram.createLookupTable({ authority: deployer.publicKey, payer: deployer.publicKey, recentSlot })
   const addresses = staticAddresses(d).map((value) => new PublicKey(value))
   await send(connection, deployer, [create])
