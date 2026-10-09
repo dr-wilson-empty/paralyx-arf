@@ -2,291 +2,274 @@
 
 # Paralyx
 
-**Turkish lira liquidity without selling your XLM.** Post XLM as collateral to a Blend v2 pool, borrow USDC, cash the USDC out as lira through a SEP-6 anchor, repay in lira. Paralyx is non-custodial software: the Blend pool is the lender, the anchor is the regulated party, the contract never holds funds.
+**Turkish lira liquidity without selling your SOL.** Post SOL as collateral to a Kamino Lend market, borrow USDC, cash the USDC out as lira through a fiat rail, repay in lira. Paralyx is non-custodial software: the Kamino obligation belongs to the user's wallet, the Kamino market is the lender, a regulated rail is the fiat party, and the Paralyx program never holds funds.
 
-Live app: https://paralyx.vercel.app · Testnet contract: [`CDZ22YMZ…L5Z4B`](https://stellar.expert/explorer/testnet/contract/CDZ22YMZKGQZVHJKRJITRZREFKCTCURUKRC63G7ABIPO6SBHXTXL5Z4B) · Mainnet contract: [`CDCYHJPS…C7ITC`](https://stellar.expert/explorer/public/contract/CDCYHJPSXA6YT5HWXOWN5R6NL2BMD5PCIXGPBVOU2C4MJHFVV6LC7ITC) · Rise In x Stellar Pro Hackathon, Scale track, Istanbul, 19 to 20 September 2026
+Live app: [paralyx-solana.vercel.app](https://paralyx-solana.vercel.app) · Program (devnet): [`PLXama5S…yG6qr`](https://explorer.solana.com/address/PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr?cluster=devnet) · Source: this repository, branch `solana-port`
 
-> One switch in the top bar, two networks. **Testnet** is the hackathon deliverable: Blend TestnetV2 plus the sandbox TRY anchor, the full loop in both directions, no real money. **Mainnet** is the same wasm deployed against Blend's Fixed pool with real XLM and USDC; the lira leg goes through a licensed exchange until a production TRY anchor exists. The mainnet contract is unaudited, use small amounts.
+> One switch in the top bar, two networks. **Devnet** is the working deployment: the Paralyx program composes Kamino's real klend program on devnet against a SOL and USDC market priced by live Pyth feeds, and the lira leg is a sandbox rail that is labeled as such on every screen. **Mainnet** is read only: the app shows Kamino's Main Market live, the Paralyx program is not deployed there yet, and the production lira rail (BiLira) is a stub with its remaining work listed in the app.
 
 ## Contents
 
 1. [Özet (TR)](#özet-tr)
-2. [Why](#why)
-3. [What the user does](#what-the-user-does)
-4. [Demo and proof](#demo-and-proof)
-5. [Architecture](#architecture)
-6. [Integrations and why they are load-bearing](#integrations-and-why-they-are-load-bearing)
-7. [Deployed artifacts](#deployed-artifacts)
-8. [Mainnet](#mainnet)
-9. [The contract](#the-contract)
-10. [The app](#the-app)
-11. [The testnet USDC seam](#the-testnet-usdc-seam)
+2. [What the user does](#what-the-user-does)
+3. [Proof on devnet](#proof-on-devnet)
+4. [Architecture](#architecture)
+5. [Integrations and why they are load-bearing](#integrations-and-why-they-are-load-bearing)
+6. [Deployed artifacts](#deployed-artifacts)
+7. [The program](#the-program)
+8. [Tests](#tests)
+9. [The app](#the-app)
+10. [The fiat rail](#the-fiat-rail)
+11. [Choosing the network](#choosing-the-network)
 12. [Run it](#run-it)
-13. [Stellar Skills used](#stellar-skills-used)
-14. [Design decisions](#design-decisions)
-15. [Regulatory posture](#regulatory-posture)
-16. [Roadmap](#roadmap)
+13. [Design decisions](#design-decisions)
+14. [Regulatory posture](#regulatory-posture)
+15. [Roadmap](#roadmap)
+16. [Lineage](#lineage)
 17. [Team](#team)
 
 ## Özet (TR)
 
-Paralyx, kripto varlığını satmak istemeyen ama liraya ihtiyacı olan kullanıcı için teminatlı likidite hattı. XLM teminat konur, Blend v2 havuzundan USDC borç alınır, USDC anchor üzerinden lira olarak IBAN'a ödenir. Geri ödeme yine lirayla yapılır: anchor'a lira yatırılır, gelen USDC borcu kapatır, teminat serbest kalır. Paralyx hiçbir noktada fon tutmaz; kredi karşı tarafı Blend havuzu, lira bacağı anchor'dır. Testnet'te tam döngü sandbox anchor ile çalışır; mainnet'te aynı sözleşme Blend Fixed havuzunda gerçek XLM ve USDC ile canlıdır, lira bacağı lisanslı TRY anchor'ı açılana kadar lisanslı borsa üzerinden gider.
-
-## Why
-
-Turkey is among the world's largest crypto markets and households already dollarize against inflation. Holders who need lira today have one option: sell. Paralyx gives them the second option every mature market has, borrowing against the asset. The user keeps XLM exposure, gets lira in minutes, and closes the position later by depositing lira.
-
-- **Users.** Crypto holders in Türkiye who need short term lira liquidity, small businesses that hold stablecoins but pay suppliers in lira.
-- **Value.** One screen, three actions: open a line, cash out lira, repay in lira. No manual bridging, no selling.
-- **Why Stellar.** Blend already runs the credit engine, anchors already speak SEP-6 for the fiat leg, fees are negligible and the whole loop settles in seconds.
+Paralyx, kripto varlığını satmak istemeyen ama liraya ihtiyacı olan kullanıcı için teminatlı likidite hattı. SOL teminat olarak Kamino Lend piyasasına konur, USDC borç alınır, USDC lira rayı üzerinden IBAN'a lira olarak ödenir. Geri ödeme yine lirayla yapılır: raya lira yatırılır, gelen USDC borcu kapatır, teminat serbest kalır. Paralyx hiçbir noktada fon tutmaz; Kamino obligation'ı kullanıcının cüzdanına aittir, kredi karşı tarafı Kamino piyasası, lira bacağı düzenlenmiş taraftır. Devnet'te tam döngü Kamino'nun gerçek klend programı ve canlı Pyth fiyatlarıyla çalışır; lira bacağı her ekranda sandbox olarak etiketlenmiş bir simülasyondur. Mainnet'te uygulama Kamino Main Market'i salt okunur gösterir; üretim lira rayı için BiLira taslağı ve kalan işler uygulamada listelidir.
 
 ## What the user does
 
-1. **Connect a wallet** through Stellar Wallets Kit. On testnet the app funds it through friendbot and adds the two USDC trustlines.
-2. **Open a line.** One Soroban transaction: the Paralyx contract submits `SupplyCollateral` and `Borrow` to the Blend v2 pool on the user's behalf. USDC lands in the wallet.
-3. **Cash out.** The app authenticates with the anchor (SEP-10), takes a lira quote (SEP-38), opens a withdrawal (SEP-6 `withdraw-exchange`) and pays the anchor treasury with the memo it returned. The anchor pays lira to the IBAN and reports a bank reference. The app records the payout on the contract.
-4. **Repay in lira.** The app opens a SEP-6 `deposit-exchange`, the user sends lira to the anchor's IBAN (the sandbox simulates the bank), USDC arrives, and one transaction repays the Blend debt and withdraws collateral.
-5. **Withdraw collateral** at any time the health factor allows, with `repay_line(user, 0, amount)`. On mainnet, while Blend has borrowing paused, this is how posted collateral comes back.
+1. **Connect a wallet** through the Solana wallet adapter: Phantom, Solflare or Backpack. On devnet the app can request SOL from the devnet faucet.
+2. **Open a line.** One transaction, one signature: the app wraps the SOL, creates the user's Kamino user metadata and vanilla obligation the first time, and calls `open_line`. Inside that instruction the Paralyx program refreshes both Kamino reserves and the obligation, deposits the SOL as collateral, refreshes again and borrows USDC. USDC lands in the wallet.
+3. **Cash out.** The rail quotes USD/TRY plus a 50 bps fee, returns a payout instruction (treasury address and memo), the user sends the USDC with that memo, the rail verifies the transfer on chain and returns a bank reference. On devnet the payout is simulated and the reference starts with `SBX-`. The app records the payout with `record_payout`.
+4. **Repay in lira.** The rail returns deposit instructions, the sandbox simulates the bank transfer and sends USDC from its devnet treasury, and one transaction repays the Kamino debt and, if the debt is closed, withdraws all collateral and unwraps it back to SOL.
+5. **Withdraw collateral** at any time the health factor allows, through `repay_line(0, ctokens)`; withdrawing everything waits until the debt is repaid.
 
-## Demo and proof
+## Proof on devnet
 
-The demo video walks the testnet loop first, then the same actions on mainnet with real money. Everything it shows is on chain; the wallet in the recording is `GCWOMS4D…KUSW`.
+The full loop ran on devnet on 9 October 2026: deploy, configure, connect, open a line, sandbox cash-out, lira repayment, reopen. The app steps ran in a browser against a local production build with the wallet adapter's burner wallet (`HkjN4VM1PLwTrMUZnEndkUx7CJmnSnXwCgnVVUuwdN5e`, funded from the deployer), without reloading between steps; the public site is the same build without the burner wallet.
 
-Testnet run, 20 September 2026:
+| Step | Signer | Transaction |
+|---|---|---|
+| Deploy `credit_line` | deployer | [`4VCqjXWX…`](https://explorer.solana.com/tx/4VCqjXWXUVfZUvc73xDGcYhxkBLB1xA6shpaLeXUwK95uuWK2FUZYD1pU6UHy4ybnhn2KNWi17Nu2dDBbbV7L5vd?cluster=devnet) |
+| `initialize`: config with the klend program, the market and both reserves | upgrade authority | [`r17ASwnd…`](https://explorer.solana.com/tx/r17ASwndoJgv8WRDKducqaisxzwMuF5n63jcukKEdpX9LAdgFt21fwD6kfq42EGkYXnXh52r3foQ3E6RUn69NWB?cluster=devnet) |
+| Sandbox treasury USDC account and fee SOL | deployer | [`45xPk7Lo…`](https://explorer.solana.com/tx/45xPk7LoYQcB2xtGH42kbRbZ37h2nVK1SBda8VAbmYkNAU534G8ZXWpv86swa7o6Bq95KHyfdhTdREHRKHA3pBoc?cluster=devnet) |
+| `open_line` from `scripts/open-line.mjs`: 1 SOL in, 20 USDC out | deployer | [`37wDTyp8…`](https://explorer.solana.com/tx/37wDTyp8N3eMDbyVWsp2y5acLhM4ZWVrCYzAnCPjeVUr9GGc8L2Am1PWTGBWLVwFd9TkU2uTgxRHdLwAvkN9Axqj?cluster=devnet) |
+| Those 20 USDC become the sandbox treasury float | deployer | [`ZAoo6ATj…`](https://explorer.solana.com/tx/ZAoo6ATjkMu8ri6UFU17D2zm2jtuY57TTT4UUu3mZepPFSRCZXgjvd6rkVW1qtYzKCfBL4eG7pDgs4HMDaGqUKP?cluster=devnet) |
+| App: open a line, 1 SOL in, 10 USDC out, one signature | test wallet | [`4UTFdUGf…`](https://explorer.solana.com/tx/4UTFdUGfxLK1bTar5S2RYN5P6XhM6btJNYREhpbvqVbWQUzCkqeqGabQfndmoHDZS6kjUGwen1Qmg86fLoLnYxN5?cluster=devnet) |
+| App: cash out 4 USDC to the sandbox rail with memo `SBX-PO-B7C18EB276` | test wallet | [`4AmAjSSb…`](https://explorer.solana.com/tx/4AmAjSSbryGWKpHtDmgAk6YdvpDcrD7RSHeUjE6ndrzSc74NpKLSRtJeFKPZtugFn2L6oGdZHhGjLZJJaHygqJra?cluster=devnet) |
+| App: `record_payout` of ₺196.34 for rail order `SBX-PO-B7C18EB276` (simulated bank reference `SBX-444E0A0A6F`) | test wallet | [`2Ttjg9yq…`](https://explorer.solana.com/tx/2Ttjg9yqJ7XPGgb6TWfhBwVEJLpvEuLqegToMpDqeq5r3kJAdkgjWFCNouPD7tUhvKX6a3jkM25B2davfi4rAyW4?cluster=devnet) |
+| Rail: settle a simulated ₺499 deposit (`SBX-DP-ED0DF3D9E8`) with 10.0645 USDC from the treasury | sandbox rail | [`4R9dQ4QU…`](https://explorer.solana.com/tx/4R9dQ4QU1xnNtLnsr56NAj7igHnHs3iPGUqjcrjSgfncgLQuQ1TC4WBYyxpd96XTNkGmqB6SKjW5PScBKkH7hTEC?cluster=devnet) |
+| App: `repay_line(u64::MAX, u64::MAX)`: 10.000002 USDC repaid, 1 SOL back, Kamino closes the obligation | test wallet | [`5eTpayvV…`](https://explorer.solana.com/tx/5eTpayvV6dujtzZLpkRK1rDdSaj5j3GuJuL4jio1kSVRRwGux6MzureyEDrhFk28Xu9Smj9oWnfGTppwGAw5qm84?cluster=devnet) |
+| App: open again, 0.5 SOL in, 5 USDC out; the obligation is re-created in the same transaction | test wallet | [`4ePNy9fq…`](https://explorer.solana.com/tx/4ePNy9fqzJEaQbhd55ZJqjxTDKcxY9bQfVTc8Mja6yQ971ztt5aCaBdL2fa4DRDaAV8vLarvVM2coPtXith6B52W?cluster=devnet) |
 
-| Step | Transaction |
-|---|---|
-| Open a line: 100 XLM collateral, 10 USDC borrowed, one signature | [`75bb18cf…670bc`](https://stellar.expert/explorer/testnet/tx/75bb18cf3f5ac792572ecc4b8cba1d8389f4dfec66b6357bd85632da479670bc) |
-| Cash out 4 USDC: strict-receive path payment into Circle USDC plus the payment to the anchor treasury with memo id `553221534198` | [`32073333…4502d`](https://stellar.expert/explorer/testnet/tx/32073333fdcaac521be8dd38f9ababe54a917be73e10a07aa4ef18355544502d) |
-| The anchor settles ₺194,16 to the IBAN, bank reference `FAST-2HK1C18LOO` | [SEP-6 transaction `sep_gi7vboi4lml7b0tz4g95`](https://tr-mock-anchor.fly.dev/sep6/tx/sep_gi7vboi4lml7b0tz4g95) |
-| `record_payout` writes the payout on the contract | [`335efaaf…94081`](https://stellar.expert/explorer/testnet/tx/335efaaf247d7ba33f9e41ff5a7dd40a7415b001d1014d15b725ede249894081) |
+`node scripts/events.mjs devnet` decodes the program's events from those transactions: `LineOpened` (1,000,000,000 lamports, 10,000,000 USDC units), `PayoutRecorded` (19,634 kuruş, `SBX-PO-B7C18EB276`), `LineRepaid` (10,000,002 USDC units, 1,000,000,000 lamports). The deployer's line (1 SOL, 20 USDC) and the test wallet's second line (0.5 SOL, 5 USDC) stay open, so the Market and Activity pages show live data. No lira moved at any point: the cash-out and the deposit are simulated by the sandbox rail.
 
-Earlier proof from the build session: a 2 USDC cash-out settled as 97.08 TRY with bank reference `FAST-NUG8V4XHN6` ([`d58c43f8…dfe4c`](https://stellar.expert/explorer/testnet/tx/d58c43f8cf23b9ffc350b9e04f1de3ec5cf7e5534e2bfebf5fe9ab06761dfe4c)) and the market maker's own line through the contract, 8,000 XLM collateral against 2,000 USDC borrowed.
-
-Mainnet run, 20 September 2026, real XLM and USDC:
-
-| Step | Transaction |
-|---|---|
-| Post 50 XLM collateral to Blend Fixed through the contract, no debt because borrowing is paused (see [Mainnet](#mainnet)) | [`0fc24776…8d461`](https://stellar.expert/explorer/public/tx/0fc2477647a9b259ae28fa352206433f0d6417295364d3faca280e1e1e78d461) |
-| Cash out 4.73 USDC to Paribu: one path payment, 24.1126 XLM arrives at the exchange deposit wallet with the account memo | [`e661cba9…bce80`](https://stellar.expert/explorer/public/tx/e661cba9ee2a5bf508fa4656f7e5f139dc0200c4b1e76c0994f9023d24ebce80) |
-| `record_payout` with the lira estimate from Reflector, ₺230,75 | [`344728c6…2d2b0`](https://stellar.expert/explorer/public/tx/344728c644d76b29db8e77699737f2f35ddad88918a024cadd24a7eb4852d2b0) |
-| The day before: 100 XLM posted and withdrawn again through the contract | [`4121f4da…14a87`](https://stellar.expert/explorer/public/tx/4121f4dac7e7bfb15915e7b48936bad98d141ff803c495ff4a0d6d04c2814a87), [`dc4d17bf…890de`](https://stellar.expert/explorer/public/tx/dc4d17bf6d2dfc6fd509d918bdd644381c3064f531609b137791106351b890de) |
-
-Every `open_line`, `repay_line` and `record_payout` call emits an event. The Activity page reads them from RPC, and the Market page builds the cumulative lira and USDC charts from them.
+Every `open_line`, `repay_line` and `record_payout` emits an event through Anchor's `emit_cpi`. The Activity page reads them from RPC (program signatures, then the program's self-invocations in each transaction), and the Market page builds the cumulative lira and USDC charts from them.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
   subgraph Browser
-    UI[Paralyx web app<br/>React, Vite, Stellar Wallets Kit]
+    UI[Paralyx web app<br/>React, Vite, Solana wallet adapter]
+    SDK[klend-sdk<br/>market and obligation reads]
   end
-  subgraph Stellar[Stellar, testnet or mainnet]
-    CL[credit_line contract<br/>Soroban]
-    BP[Blend v2 pool]
-    OR[Blend oracle]
-    DEX[Stellar DEX<br/>path payments]
-    SAC[XLM and USDC<br/>Stellar Asset Contracts]
-    RF[Reflector FX oracle<br/>USD/TRY]
+  subgraph Server[Vercel function]
+    RAIL[/api/rail<br/>sandbox rail and FX/]
+  end
+  subgraph Solana[Solana devnet or mainnet]
+    PLX[credit_line<br/>Anchor program]
+    KL[Kamino Lend<br/>klend]
+    FM[Kamino farms]
+    PY[Pyth price feeds]
+    TOK[SPL Token<br/>WSOL and USDC]
+    TR[(Sandbox treasury<br/>devnet USDC)]
   end
   subgraph Lira[Lira leg]
-    AN[TR anchor<br/>SEP-1, 10, 6, 12, 38]
-    BANK[(Bank<br/>IBAN payouts)]
-    EX[Licensed exchange<br/>mainnet, until a TRY anchor opens]
+    BANK[(Bank<br/>IBAN, simulated on devnet)]
+    BL[BiLira<br/>production rail, not wired]
   end
-  UI -- open_line / repay_line / record_payout --> CL
-  CL -- submit(from=user) --> BP
-  BP -- lastprice --> OR
-  BP -- transfer --> SAC
-  UI -- lastprice, hourly history --> RF
-  UI -- SEP-10 auth, SEP-38 quote, SEP-6 exchange --> AN
-  UI -- path payment + payment with memo --> DEX
-  DEX -- USDC to treasury --> AN
-  DEX -- XLM with memo --> EX
-  AN -- lira --> BANK
-  EX -- lira --> BANK
-  UI -- get_line, get_positions, events --> CL
+  UI -- open_line, repay_line, record_payout --> PLX
+  PLX -- refresh, deposit v2, borrow v2, repay v2, withdraw v2 --> KL
+  KL -- farm stake refresh --> FM
+  KL -- price --> PY
+  KL -- transfers --> TOK
+  UI -- obligation, reserves, APY --> SDK
+  SDK --> KL
+  UI -- SOL/USD on chain --> PY
+  UI -- quote, payout, deposit --> RAIL
+  RAIL -- verify payment, send USDC --> TR
+  RAIL -- USD/TRY --> PY
+  RAIL -. simulated .-> BANK
+  BL -. future .-> BANK
 ```
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant U as User wallet
-  participant P as Paralyx app
-  participant C as credit_line
-  participant B as Blend v2 pool
-  participant A as TR anchor
-  U->>P: Open line (100 XLM, borrow 10 USDC)
-  P->>C: open_line(user, 100 XLM, 10 USDC)
-  C->>B: submit(user, user, user, [SupplyCollateral, Borrow])
-  B-->>U: 10 USDC
-  C-->>P: Line + LineOpened event
-  U->>P: Cash out 4 USDC
-  P->>A: SEP-10 challenge, sign, JWT
-  P->>A: SEP-38 price, SEP-6 withdraw-exchange
-  A-->>P: treasury address + memo id
-  U->>A: USDC payment with memo
-  A-->>U: lira to IBAN, bank reference
-  P->>C: record_payout(user, anchor tx id, lira)
-  U->>P: Repay in lira
-  P->>A: SEP-6 deposit-exchange, simulate bank
-  A-->>U: USDC
-  P->>C: repay_line(user, USDC, XLM)
-  C->>B: submit(user, user, user, [Repay, WithdrawCollateral])
+  participant A as Paralyx app
+  participant P as credit_line
+  participant K as Kamino klend
+  participant R as Sandbox rail
+  U->>A: Open line (1 SOL, borrow 10 USDC)
+  A->>P: wrap SOL, init obligation if new, open_line(1 SOL, 10 USDC)
+  P->>K: refresh_reserve x2, refresh_obligation
+  P->>K: deposit_reserve_liquidity_and_obligation_collateral_v2
+  P->>K: refresh x3, borrow_obligation_liquidity_v2
+  K-->>U: 10 USDC
+  P-->>A: Line updated, LineOpened event
+  U->>A: Cash out 4 USDC
+  A->>R: quote, payout instruction
+  U->>R: 4 USDC to treasury with memo
+  R-->>A: verified on chain, SBX bank reference
+  A->>P: record_payout(rail id, lira)
+  U->>A: Repay in lira
+  A->>R: deposit instruction, simulated bank transfer
+  R-->>U: USDC from treasury
+  A->>P: repay_line(all, all)
+  P->>K: refresh, repay_v2, refresh, withdraw_v2
+  K-->>U: SOL collateral back
 ```
 
 ## Integrations and why they are load-bearing
 
 | Piece | Role | Without it |
 |---|---|---|
-| **Blend v2** lending pool (TestnetV2 on testnet, Fixed on mainnet) | Credit engine: collateral factors, interest, liquidations, oracle, pool status | No credit. Paralyx never reimplements lending math |
-| **TR Mock Anchor** (SEP-1, SEP-10, SEP-6, SEP-12, SEP-38) | Fiat rail in both directions on testnet, lira out and lira in | No lira. The product is a Blend front end |
-| **Stellar Wallets Kit** | Wallet connection and signing for Freighter, xBull, Lobstr, Albedo and others | Manual wallet plumbing |
-| **Reflector** FX oracle | USD/TRY for the lira limit, the lira chart and the mainnet payout estimate; on testnet the anchor's SEP-38 quote carries the same rate | Static rate |
-| **Stellar DEX** path payments | Converts between the two testnet USDC issuers; on mainnet delivers USDC as XLM to the exchange deposit wallet in one operation | Anchor USDC and Blend USDC cannot meet on testnet; two transactions on mainnet |
-| **USDT0** (Tether over LayerZero, mainnet) | Repay the line with USDT0 in the wallet, converted to USDC on the DEX in the same flow | USDT holders must swap by hand first |
+| **Kamino Lend** (`klend`, `KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD`) | Credit engine: collateral and debt accounting, interest, LTVs, liquidations, oracle checks | No credit. Paralyx never reimplements lending math |
+| **Pyth** | SOL/USD and USDC/USD for Kamino's reserves and for the app (on-chain push feed `7UVimf…`); Hermes for history | No prices, Kamino refuses to refresh |
+| **Solana wallet adapter** | Phantom, Solflare and Backpack through Wallet Standard, plus the adapters' install links | Manual wallet plumbing |
+| **FiatRail** (sandbox on devnet, BiLira stub on mainnet) | Lira out and lira in behind one interface | No lira. The product would be a Kamino front end |
+| **klend-sdk** | Health factor, LTV, liquidation LTV and APYs from the user's obligation and the market's reserves | The app would reimplement Kamino's math |
 
 ## Deployed artifacts
 
-Stellar testnet:
-
-| Item | Value |
-|---|---|
-| `credit_line` contract | `CDZ22YMZKGQZVHJKRJITRZREFKCTCURUKRC63G7ABIPO6SBHXTXL5Z4B` |
-| Wasm hash | `372416665b3b71cb8282c791c3ab1b021e78ccd7702f8e6eb8f8eb175b8666de` |
-| Deploy transaction | [`fdb56b80…6fc59`](https://stellar.expert/explorer/testnet/tx/fdb56b80d93f3dd63e2dcaad9fab871ce35ad6a248618d6bd10c08326466fc59) |
-| Contract admin | `GDOZ44UXCLBBUTRQFOI6G5HQ5MGHG2LLEXALFKP4MTQBWEFHKPHDV52F` |
-| Blend v2 pool (TestnetV2) | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
-| Blend oracle | `CAZOKR2Y5E2OSWSIBRVZMJ47RUTQPIGVWSAQ2UISGAVC46XKPGDG5PKI` |
-| XLM Stellar Asset Contract | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
-| Blend USDC (debt asset) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU`, issuer `GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56` |
-| Anchor USDC (Circle testnet) | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`, issuer `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` |
-| USDC liquidity pool (both issuers) | `23283282cba3c5363761ac9a7ce1ca027f6205f07107c730a76cfc021b9439e9` |
-| Anchor | `tr-mock-anchor.fly.dev`, treasury `GCLCZEQZ2THTEDAOFI66LACNPLY4OBKN7VKLEZFMBIHYKYQOW2W7T3Z6` |
-| Paralyx market maker | `GBMT43HXUDOSTBA4ALPIFJWRI72PH5YICAQIDOEJ23YEWUZ7TW2F6T7Q` |
-
-Stellar mainnet:
-
-| Item | Value |
-|---|---|
-| `credit_line` contract | `CDCYHJPSXA6YT5HWXOWN5R6NL2BMD5PCIXGPBVOU2C4MJHFVV6LC7ITC` |
-| Wasm hash | `372416665b3b71cb8282c791c3ab1b021e78ccd7702f8e6eb8f8eb175b8666de`, identical to testnet |
-| Upload transaction | [`edfaa2f8…1e305`](https://stellar.expert/explorer/public/tx/edfaa2f878f1a4899e69d3eaaa83c84906e0bcc8f325ff86c73acf8aacd1e305) |
-| Deploy transaction | [`8358959d…be80e`](https://stellar.expert/explorer/public/tx/8358959dbb225de13e9d3cfbbc1d56a521d82caac947327fbb55ad92baabe80e) |
-| Contract admin | `GDOZ44UXCLBBUTRQFOI6G5HQ5MGHG2LLEXALFKP4MTQBWEFHKPHDV52F` |
-| Blend v2 Fixed pool | `CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD`, XLM collateral factor 0.75, USDC 0.95 |
-| Blend oracle | `CCVTVW2CVA7JLH4ROQGP3CU4T3EXVCK66AZGSM4MUQPXAI4QHCZPOATS` |
-| Reflector FX oracle | `CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC` |
-| XLM Stellar Asset Contract | `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA` |
-| USDC (Circle) | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`, issuer `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` |
-| USDT0 (Tether over LayerZero) | `USDT0:GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q` |
-
-## Mainnet
-
-The same `credit_line` wasm is deployed on Stellar mainnet against Blend v2's Fixed pool. Switching the top bar to Mainnet points the app at it. What changes:
-
-- **One USDC.** Blend's USDC and the anchor USDC are the same Circle asset, so the testnet conversion seam disappears.
-- **Lira leg through a licensed exchange.** There is no production SEP-6 TRY anchor on Stellar yet. The exchange page sends the borrowed USDC to your exchange deposit address as XLM in a single path payment with the exchange's memo; you sell there and withdraw lira to your IBAN. The app then records the payout on the contract with the lira value at Reflector's rate, so the lira charts stay live on mainnet. When a licensed anchor opens, the SEP-6 adapter used on testnet takes over with a home domain change.
-- **Repay with USDT0 or USDC.** USDT0 in the wallet converts to USDC on the Stellar DEX and repays the line in the same flow; USDC repays directly.
-- **Pool status is enforced in the UI.** Blend gates new borrows when a pool is on ice (status above 1) and supplying when it is frozen (above 3). The app reads `get_config`, shows the status on the line card, the market page and the live market card, disables the borrow field and switches the action to collateral only while borrowing is closed. As of 20 September 2026 both Blend v2 mainnet pools are on ice after the late August exploit of the Comet BLND-USDC pool that backs the backstop, so the mainnet contract accepts collateral, repayments and withdrawals but no new debt until Blend resumes. Nothing in Paralyx needs to change for that: lines open the moment the pool status allows it.
-- **Exchange transfers are verified before signing.** The cash-out card checks the destination on Horizon (the account must exist and must not be the sender), reads the SEP-29 `config.memo_required` flag and blocks memo-less sends to accounts that declare it, looks the address up in the stellar.expert directory and locks the send if it belongs to a different exchange than the one selected, shows a transfer summary with the minimum XLM that will arrive, and requires an explicit confirmation that the address and memo match the exchange deposit page.
-- **Fees are real.** Uploading the 9.5 KB wasm cost about 15 XLM of code storage rent; creating the contract about 2 XLM. Inclusion fees needed 2,000 stroops during the deploy because the default 100 was below the network's Soroban minimum at the time.
-
-## The contract
-
-`contracts/credit_line` is a thin, auditable composition layer over Blend. It never holds tokens. All value moves between the user and the Blend pool; the contract records the line and emits events.
-
-| Function | Auth | What it does |
+| Artifact | Network | Address |
 |---|---|---|
-| `__constructor(admin, pool, collateral_asset, debt_asset)` | deploy time | Stores config in instance storage. Runs once, so there is no reinitialization surface |
-| `open_line(user, collateral_amount, borrow_amount)` | `user` | Builds `SupplyCollateral` and `Borrow` requests (a zero amount skips that request), calls `pool.submit(user, user, user, requests)`, creates or tops up the line, emits `LineOpened` |
-| `repay_line(user, repay_amount, withdraw_collateral)` | `user` | `Repay` and `WithdrawCollateral` requests (zero skips), updates the line, emits `LineRepaid`. Blend clamps over-repayment and over-withdrawal |
-| `record_payout(user, anchor_tx_id, try_amount)` | `user` | Records a completed lira payout (amount in kuruş), emits `PayoutRecorded` |
-| `get_line(user)`, `get_config()`, `get_line_count()` | none | Views |
-| `positions(user)` | none | Passes through to `pool.get_positions` |
-| `upgrade(new_wasm_hash)` | `admin` from storage | Upgrades the code |
+| Paralyx program `credit_line` | devnet | [`PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr`](https://explorer.solana.com/address/PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr?cluster=devnet) |
+| Program data | devnet | `9wsC8YmEb2jt9jfraBUYc4yTJUdTidSJNyN6N1n7aGaj` |
+| Upgrade authority (deployer) | devnet | `JCL5Xpx2ff3aAZMvJ9Rm39kmjsSnL28vD9AxBJ1opBva` |
+| Deploy transaction | devnet | [`4VCqjXWX…`](https://explorer.solana.com/tx/4VCqjXWXUVfZUvc73xDGcYhxkBLB1xA6shpaLeXUwK95uuWK2FUZYD1pU6UHy4ybnhn2KNWi17Nu2dDBbbV7L5vd?cluster=devnet), slot 509,223,802 |
+| `Config` PDA | devnet | `9DktwSfvbaWa3TwH19fYCCHdaj6m8EudG7i91kjfijYx` |
+| Event authority PDA | devnet | `F1pRTfwrXi5jULzbJ2T2PV4oYAyWfbqXr7qVurE13q8z` |
+| Address lookup table | devnet | [`65qPaimB5uhZ1TADzMY2wwvgqnZbBoNdFQsYcBTFEzLK`](https://explorer.solana.com/address/65qPaimB5uhZ1TADzMY2wwvgqnZbBoNdFQsYcBTFEzLK?cluster=devnet), 28 addresses |
+| Sandbox rail treasury | devnet | `G1gP9iSfZ5xFjikdGfBc1rb5vs6ypvMP8xuwTdBCgg2c` |
+| Kamino klend program | devnet and mainnet | `KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD` |
+| Kamino lending market | devnet | `4GiGCkrwHphwrsG8imKSHhjTtmbjorqYrYwMsRtBu77Z` |
+| SOL reserve, USDC reserve | devnet | `4yh877FXQrfGWLvvEV2QXNUQh4gBN4Q7gcM7Fz4uAnUs`, `DJ8gPwXaEX2T8ZJGwZNJc9vL6iwrUUyUrwzeSgjD8RHH` |
+| Circle devnet USDC mint | devnet | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
+| Kamino Main Market (read only) | mainnet | `7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF` |
+| Web app | Vercel | [paralyx-solana.vercel.app](https://paralyx-solana.vercel.app) |
+
+The deployed binary is 380,992 bytes, sha256 `40db4ee6663f78ad7a9b42c60474a2a7a4bc0789c54aed190be888ba7bfd7be3`, built with Anchor 1.2 and platform tools v1.57 from the program source at commit `1561b2d`. `solana program dump PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr credit_line.so -u devnet` returns the same bytes. The build is not reproducible bit for bit on another machine; a verifiable build (`solana-verify`, Docker) is on the mainnet checklist.
+
+## The program
+
+`contracts/credit_line` is an Anchor 1.2 program. It is a thin composition layer over Kamino: all value moves between the user's token accounts and the Kamino reserves inside Kamino's own instructions; Paralyx validates the accounts, sequences the CPIs, records the line and emits events.
+
+| Instruction | Signer | What it does |
+|---|---|---|
+| `initialize()` | program upgrade authority | Creates the `Config` PDA: klend program, lending market, collateral reserve, debt reserve. Checks the market and both reserves on chain and refuses a signer that is not the upgrade authority. Runs once |
+| `open_line(collateral_amount, borrow_amount)` | user | Refreshes both reserves and the obligation, `deposit_reserve_liquidity_and_obligation_collateral_v2`, refreshes again, `borrow_obligation_liquidity_v2`. A zero amount skips its step; both zero fails with `EmptyRequest` before any CPI. A `borrow_amount` of `u64::MAX` fails with `UnboundedAmount`, because Kamino reads it as "borrow the most the LTV allows". Creates the `Line` PDA on first use, emits `LineOpened` |
+| `repay_line(repay_amount, withdraw_ctokens)` | user | Refresh, `repay_obligation_liquidity_v2`, refresh, `withdraw_obligation_collateral_and_redeem_reserve_collateral_v2`. A `repay_amount` of `u64::MAX` repays the whole debt. `withdraw_ctokens` is in Kamino collateral tokens, not lamports (the app converts with the reserve's exchange rate); `u64::MAX` withdraws everything and is accepted only when no debt is left after the repay step, since with open debt Kamino reads it as "the most the LTV allows". Fails with `LineNotFound` before any CPI if the user never opened a line. Emits `LineRepaid` with the lamports actually received |
+| `record_payout(rail_tx_id, try_amount)` | user | Records a completed lira payout (kuruş) against the line, emits `PayoutRecorded`. The reference must be 1 to 64 bytes |
+
+Accounts: `Config` (seeds `config`) holds the configuration and `line_count`; `Line` (seeds `line`, user) holds `opened_at`, `updated_at`, `collateral_in`, `collateral_out`, `borrowed`, `repaid`, `payouts`, `payout_try`. Both carry a `version` byte (1) and 64 reserved bytes, so later fields fit without a reallocation and a migration can tell old records from new ones. The Stellar version's views (`get_line`, `get_config`, `get_line_count`, `positions`) are now client-side reads of these accounts and of the user's Kamino obligation; its `upgrade` function is replaced by the program upgrade authority.
+
+Errors start at 7000 so a failure is never confused with klend's own codes, which start at 6000 and surface through the CPI: `EmptyRequest` 7000, `LineNotFound` 7001, `MarketMismatch` 7002, `ReserveMismatch` 7003, `ObligationMismatch` 7004, `UnsupportedObligation` 7005, `InvalidReference` 7006, `NotUpgradeAuthority` 7007, `AmountOverflow` 7008, `UnboundedAmount` 7009.
 
 Patterns worth pointing at:
 
-- **Nested authorization.** The user signs once. `open_line` calls `user.require_auth()`, then Blend's `submit` calls `spender.require_auth()` and the token contracts require the same address again inside the sub-invocation tree. One signed authorization covers the whole tree, which is what makes a router contract possible on Soroban.
-- **Storage.** Config and the line counter live in instance storage; each user's `Line` lives in persistent storage under `DataKey::Line(user)`. Every read and write extends the TTL (14 day threshold, 60 day extension), and every entrypoint bumps the instance TTL.
-- **Events.** Typed `#[contractevent]` structs with the user as a topic, so wallets and the Activity page can filter by address.
-- **Validation.** Negative amounts panic with a typed error, empty request lists are rejected before any cross-contract call, and repay or payout on a missing line fails.
-- **Line totals are requested amounts.** Blend clamps an over-sized repay or withdrawal to the real position, so the app passes amounts close to the position and the authoritative balances always come from `get_positions`.
+- **The obligation is the user's.** The program accepts only the user's vanilla Kamino obligation (tag 0, id 0, seeds over the user's wallet and the configured market), checks its owner and market fields, and rejects obligations that hold other reserves or carry a referrer. Kamino itself requires the user's signature on every deposit, borrow, repay and withdraw; the user signs once and the signature carries through the CPI. No Paralyx PDA ever owns a position or a token account.
+- **v2 handlers, not v1.** In klend's source (v1.25.0), the v1 handlers run `check_refresh`, which inspects the transaction's instruction list and rejects CPI from programs outside Kamino's whitelist. The v2 handlers refresh farms themselves and accept CPI, so the program performs the refreshes as CPIs in the same instruction. The v2 path runs against the mainnet klend binary in every test.
+- **Measured accounting.** The line records the balance changes of the user's own token accounts, not the requested amounts. Kamino rounds a 1 SOL deposit to 999,999,999 lamports and clamps repayments; the line shows exactly what moved.
+- **Events survive Kamino's logs.** Kamino logs heavily, and Solana truncates logs at 10 KB. `emit_cpi` puts the events in a self-invocation instead of the log.
+- **Kamino closes an emptied obligation** and refunds its rent; the app re-creates it on the next open.
 
-Tests (`cargo test`, 8 tests) run against a mock pool that records the forwarded requests and cover: request forwarding, auth requirement without mocked auths, rejection of empty and negative requests, aggregation on a second open, repay and withdraw forwarding, missing-line failures, payout recording and config storage.
+Limits and trust, stated plainly:
+
+- **The upgrade authority is the custody boundary.** Users sign transactions that call this program, and their signature carries into its CPIs, so whoever can upgrade the program could ship code that moves what those transactions can reach. On devnet the deployer key holds the authority. Before mainnet it moves to a multisig with a timelock, or the program is made immutable with `solana program set-upgrade-authority --final`.
+- **Obligations with a referrer are refused.** A user whose Kamino obligation was opened through a referral link gets `UnsupportedObligation`; supporting them means passing the referrer accounts through.
+- **Payout counters are self-attested.** `record_payout` is signed by the user. The sandbox rail checks the transfer before it issues an `SBX-` reference, but the program does not verify the reference; `payouts` and `payout_try` say what the user's rail reported. A production rail would co-sign records with its own key.
+- **Compute and size.** In the tests `open_line` consumes about 267,000 compute units and `repay_line` about 247,000. A legacy message with only `open_line` is 1,004 bytes; with the client's wrapping, ATA and setup instructions it would pass Solana's 1,232-byte limit, so the app requests 1,000,000 units and sends version 0 transactions through an address lookup table.
+
+## Tests
+
+`anchor test` builds the program and runs fourteen LiteSVM tests (`contracts/credit_line/tests/credit_line.rs`) against the real klend and farms programs and a single-slot snapshot of Kamino's mainnet Main Market: the lending market, the SOL and USDC reserves with their vaults and mints, Scope prices and the SOL collateral farm. `contracts/fixtures/fetch.mjs` dumps the two program binaries and fetches the accounts in one `getMultipleAccounts` call so the reserves and vaults agree; the snapshot is not committed because the klend binary is BUSL licensed and ten megabytes. The script records the slot, the cluster's block time and the sha256 of both binaries. The last run used slot 454,900,180 (block time 2026-10-09 14:56:14 UTC), klend `ac5a94790923b0a8cccb981e6f20b5bbb4a67ae35490b685db3009b144771009` and farms `766533347d1e477537185192a8018962150898d457a0e4e98c0c5a2ba9133afd`.
+
+| Test | Ported from |
+|---|---|
+| `open_line_deposits_sol_and_borrows_usdc_on_kamino` | `open_line_forwards_collateral_and_borrow_to_pool` |
+| `open_line_requires_user_signature` | `open_line_requires_user_auth` |
+| `open_line_rejects_empty_requests_and_foreign_reserves` | `open_line_rejects_empty_and_negative_requests` |
+| `second_open_aggregates_without_counting_a_new_line` | `second_open_aggregates_without_double_counting_lines` |
+| `repay_line_repays_debt_and_withdraws_collateral` | `repay_line_forwards_repay_and_withdraw` |
+| `repay_without_line_fails` | `repay_without_line_fails` |
+| `record_payout_updates_line_and_requires_line` | `record_payout_updates_line_and_requires_line` |
+| `config_and_positions_are_client_side_reads` | `positions_reads_through_to_pool_and_config_is_stored` |
+| `initialize_requires_upgrade_authority` | new |
+| `initialize_rejects_reserves_of_another_market` | new |
+| `open_line_rejects_unbounded_borrow` | new |
+| `repay_line_withdraws_exact_ctokens_and_rejects_unbounded_withdraw_in_debt` | new |
+| `open_line_rejects_foreign_and_referred_obligations` | new |
+| `line_seeds_bind_payouts_and_repayments_to_the_signer` | new |
+
+`node --test` in `scripts/` adds three client checks: transaction confirmation without websockets, events paired with their own transaction when the RPC answers a batch out of order, and the `@solana/web3.js` load path that Vercel's runtime uses.
+
+Amounts are `u64`, so the Soroban `NegativeAmount` check cannot be expressed; its test now covers a swapped reserve pair, and the payout test covers empty and oversized references.
 
 ## The app
 
-Five screens behind a collapsible sidebar, all reading from chain and from the anchor, nothing mocked. English by default, Turkish behind the TR switch.
+The five screens, the layout, the Sora typeface, the lavender accent, the TR and EN copy and the dark theme are unchanged. What changed is underneath:
 
-- **Dashboard.** Available lira limit, collateral, debt, health factor, pool status, live USD/TRY and XLM/USD charts, lines opened per hour, recent activity.
-- **Market.** The Blend v2 pool: total supplied and borrowed in USD, utilization, every reserve with price, supply and borrow APR from Blend's three slope rate model, collateral factors, pool status. Below it, Paralyx's own hourly and cumulative lira payouts and cumulative USDC borrowed, built from contract events.
-- **Activity.** Protocol totals and the event feed, filterable to your address, every row linked to the explorer.
-- **Open a line.** Wallet setup (friendbot and trustlines on testnet), the collateral plus borrow form with borrow gating by pool status, and the collateral withdrawal card.
-- **Exchange.** Testnet: USDC to lira through the anchor, lira to USDC to repay. Mainnet: USDC to the exchange as XLM, repay with USDT0, repay with USDC.
+- **Panel.** Available lira limit from the obligation's borrow limit, collateral in SOL, debt in USDC, health factor with LTV and liquidation LTV, live USD/TRY and SOL/USD charts, lines opened per hour, recent activity.
+- **Piyasa.** The Kamino market's active reserves: price, supplied, borrowed, utilization, supply and borrow APY, maximum LTV and liquidation LTV, market status. Below it, Paralyx's hourly and cumulative lira payouts and cumulative USDC borrowed, from program events.
+- **Hareketler.** Protocol totals and the event feed, filterable to your address, every row linked to Solana Explorer.
+- **Hat aç.** Devnet SOL faucet, the collateral and borrow form with the borrow limit preview, the collateral withdrawal card, the roadmap.
+- **Takas.** Cash out and repay in lira through the rail; on mainnet, the BiLira card with its open work.
 
-### Charts
+Data sources: Kamino reserves and the user's obligation through klend-sdk (`web/src/lib/kamino.ts`, loaded on demand); SOL/USD from Pyth through the rail function (Hermes), with Pyth's on-chain push feed as the fallback; USD/TRY and price history from the rail function (`web/api/rail.ts`). Transactions are built in `web/src/lib/paralyx.ts`, which the Node scripts import too, and sent as version 0 transactions with an address lookup table that holds the program, market, reserve, vault, mint and oracle accounts.
 
-TradingView's open source lightweight-charts: crosshair with a local-time tooltip, formatted price and time axes, a dashed last-price line, a lavender gradient area, and for XLM a candlestick view with a volume histogram and 24 hour, 7 day and 30 day ranges (Horizon trade aggregations at 15 minute, hourly and daily resolution). Calm series such as USD/TRY keep a minimum visible span so one kuruş of noise does not fill the frame; cumulative series are stepped. Colors follow the theme tokens live. Data: Reflector's mainnet FX oracle for USD/TRY (hourly points, as far back as the oracle keeps history) and Stellar DEX trade aggregations for XLM/USDC; the live values on the dashboard poll Reflector's `lastprice` and the mainnet XLM/USDC order book every 15 seconds.
+klend-sdk 13 imports three helpers from kliquidity-sdk, which pulls in Orca's WebAssembly bindings with a top-level await that Vite cannot bundle. The build aliases kliquidity-sdk to `web/src/shims/kliquidity.ts`, which reimplements those helpers line for line.
 
-### Design system
+## The fiat rail
 
-White surfaces, black text, and a lavender accent (`#d9dbfc`) for every interactive component: buttons, selected states, badges, chart fills and progress markers. Colors are theme tokens (`web/src/index.css`), so the dark theme is a variable override with the same accent. The theme follows the system preference on first visit and can be toggled from the header; the sidebar collapses to an icon rail; both choices persist. Sora Light is the only typeface. Wallet connection is a custom modal over Stellar Wallets Kit.
+`web/src/lib/rail.ts` defines `FiatRail`: `quote`, `startPayout`, `confirmPayout`, `startDeposit`, `settleDeposit`. Two implementations:
 
-### Data layer
+- **SandboxRail** (devnet). Backed by `web/api/rail.ts`, served at `/api/rail` by a Vercel function and by the Vite dev and preview servers. Quotes USD/TRY plus 50 bps. A payout returns an HMAC-signed instruction; after the user's transfer, the server reads the transaction from devnet and checks the USDC amount, the treasury token account, the authority and the memo before it returns an `SBX-` reference. A deposit is settled by a transfer from the sandbox treasury; the memo makes the settlement idempotent, the amount is capped, and the instruction expires after 15 minutes. Every screen, receipt and reference says that no lira moved.
+- **BiLiraDirectRail** (mainnet). A stub that throws `RailNotWired` and carries the production work as data, rendered on the mainnet Takas screen: partner agreement and API access, KYC at BiLira, quote, USDC or TRYB (`A94X2fRy3wydNShU4dRaDyap2UuoeWJGWyATtyp61WZf`) payout to the user's own IBAN with a webhook reference, lira deposit to USDC, `record_payout` with BiLira's order id, and confirmation of BiLira's final authorization.
 
-Every read goes through a small cache in `web/src/lib/store.ts`: keyed entries with a time to live, in-flight de-duplication, background revalidation while the tab is visible, and a persisted snapshot in `localStorage` (bigint safe) so a returning visitor sees the last known state at first paint while fresh data loads behind it. Screens update field by field as each request lands. Contract events are kept in an incremental local log and only the ledgers after the last scan are fetched; Reflector hourly points are cached per hour; Blend reserve reads are shared between the market table and the health calculation; navigation links prefetch their page's data on hover. RPC calls run through a concurrency limited pool with retry and, on mainnet, a second endpoint as fallback.
+USD/TRY: Pyth publishes `FX.USD/TRY` (feed `032a2eba…e058`), but Hermes has required an API key since 26 August 2026 and FX feeds need an FX entitlement on that key. With `PYTH_API_KEY` set and entitled, the rail uses Pyth; otherwise it falls back to the previous source, Reflector's FX oracle, read server side. The current key is entitled for crypto feeds only, so SOL history comes from Pyth and USD/TRY from Reflector.
 
-### Exchange screens
+## Choosing the network
 
-Both networks share one set of exchange primitives: a segmented mode switch, an amount field with balance, presets and inline validation, a quote bar with age and refresh, a collapsible fee breakdown, a list of reasons while the action is disabled, a receipt with copy buttons and explorer links after success, and a local history of the wallet's recent transactions. On mainnet the exchange picker carries the exchanges' own icons. Choosing Paribu fills its current XLM deposit wallet (`GAMZLXGV…QNAGH`, the account Paribu's app shows to depositors); the older `GBZLHGDY…ZQKVA` listed in the stellar.expert directory is also recognised. The user only adds the memo from their own Paribu account. Saved accounts let a device remember an exchange address and memo behind one chip; the app also ships one built-in saved account for the founder's own Paribu deposit so the demo runs from a fresh browser.
-
-## The testnet USDC seam
-
-Blend's testnet pool lends its own test USDC (issuer `GATALT…`). The anchor pays and accepts Circle's testnet USDC (issuer `GBBD47…`). They are different assets on testnet and the same asset on mainnet. The app bridges the gap with the Stellar DEX: cash-out uses a strict-receive path payment (Blend USDC in, exactly the anchor amount of Circle USDC out) followed by the memo payment to the treasury, and repayment converts the other way before calling `repay_line`. During the build the shared liquidity pool between the two issuers was one-sided, so the Paralyx market maker rebalanced it to roughly 2,000 USDC per side at 1:1 ([`cc265840…547f0`](https://stellar.expert/explorer/testnet/tx/cc2658404c263f9fe3a2244e412579f1351b40d28ec6dfe310e12756e76547f0)). On mainnet this whole section disappears.
+Kamino's klend program is deployed on devnet under the mainnet program id. A scan of its devnet accounts found 174 lending markets; most are stale tests. `refresh_reserve` was simulated against every devnet market that has both a SOL reserve and a reserve for Circle's devnet USDC (`4zMMC9…DncDU`). Market `4GiGCkrwHphwrsG8imKSHhjTtmbjorqYrYwMsRtBu77Z` passed for both reserves on Pyth's devnet push feeds (SOL/USD `7UVimf…`, USDC/USD `Dpw1EA…`), has no farms or elevation groups in the way, and had about 67 USDC available to borrow when it was chosen. It is small: the lines opened for the proof above use part of that liquidity. It is a third-party test market on Kamino's devnet deployment, not a market Kamino operates; its owner can change it. Paralyx runs on devnet against it, and the program's tests run against Kamino's mainnet Main Market instead, so the mainnet path is covered too. The staging program `SLendK7y…FJSh` was not needed.
 
 ## Run it
 
 ```
-contracts/            Soroban workspace (credit_line)
-web/                  React + Vite + Tailwind v4 app, Sora typeface, EN and TR
-scripts/              Node helpers: anchor SEP flows, market seeding, cash-out and event checks
-docs/                 Demo narration, demo scenario, jury Q&A, pitch outline, brand assets
+contracts/            Anchor workspace: credit_line program, LiteSVM tests, mainnet fixtures script
+web/                  React + Vite app, Vercel function for the rail (api/)
+scripts/              Node helpers: devnet setup, open a line, repay, cash out, decode events
+docs/brand/           Paralyx marks
 ```
 
-### Build and test the contract
+### Program
 
 ```bash
 cd contracts
-cargo test
-stellar contract build
-stellar contract optimize --wasm target/wasm32v1-none/release/credit_line.wasm
+anchor build
+anchor test
 ```
 
-Deploy (constructor arguments after `--`):
+`anchor test` fetches the mainnet fixtures on first run (`node fixtures/fetch.mjs`, pass `--refresh` to update them) and runs `cargo test`. Requirements: Anchor CLI 1.2, Solana CLI 4.1 with platform tools v1.57 (the program builds as SBPF v3, active on devnet and mainnet), Rust 1.98.1 for the host side.
+
+Deploy and configure on devnet (the keypair paths are examples):
 
 ```bash
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/credit_line.optimized.wasm \
-  --source-account <deployer> --network testnet -- \
-  --admin <G...> \
-  --pool CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF \
-  --collateral_asset CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
-  --debt_asset CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU
+solana program deploy target/deploy/credit_line.so --program-id target/deploy/credit_line-keypair.json --keypair <deployer.json> -u devnet
+node ../scripts/setup-devnet.mjs <deployer.json> <treasury.json>
 ```
 
-Drive it from the CLI (the source account is the user; nested Blend and token auths are signed with it):
+`setup-devnet.mjs` initializes the config, creates the address lookup table and prepares the sandbox treasury's USDC account.
 
-```bash
-stellar tx new change-trust --source-account <user> --network testnet \
-  --line USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56
-stellar contract invoke --id CDZ22YMZKGQZVHJKRJITRZREFKCTCURUKRC63G7ABIPO6SBHXTXL5Z4B \
-  --network testnet --source-account <user> -- \
-  open_line --user <G...> --collateral_amount 1000000000 --borrow_amount 100000000
-```
-
-### Run the web app
+### App
 
 ```bash
 cd web
@@ -294,64 +277,54 @@ npm install
 npm run dev
 ```
 
-Network configuration is in `web/src/config.ts`. The app needs a wallet supported by Stellar Wallets Kit; Freighter is the easiest, set it to testnet or mainnet to match the switch in the top bar.
+Server environment for the rail (`web/.env.local` locally, project settings on Vercel): `SANDBOX_TREASURY_SECRET` (the devnet treasury keypair as a JSON array), `RAIL_RPC` (devnet RPC), `PYTH_API_KEY` (optional). `VITE_BURNER_WALLET=1` adds the wallet adapter's burner wallet on devnet for local testing; never set it for a public build.
 
 ### Scripts
 
 ```bash
-cd scripts && npm install
-node anchor.mjs deposit <secret> 1000        # SEP-10, SEP-12, deposit-exchange, simulated bank, poll
-node anchor.mjs withdraw <secret> 2          # withdraw-exchange instruction (treasury + memo)
-node cashout-test.mjs <secret> 2             # full cash-out: convert, pay with memo, wait for the anchor
-node rebalance-pool.mjs <secret> 1990        # swap Blend USDC into the shared pool
-node events-test.mjs                         # decode contract events from RPC
+node scripts/open-line.mjs <keypair.json> 1 10        # 1 SOL collateral, borrow 10 USDC
+node scripts/cashout.mjs <keypair.json> 4 <rail url>  # sandbox cash-out and record_payout
+node scripts/repay.mjs <keypair.json> max max         # repay everything, withdraw everything
+node scripts/events.mjs devnet                        # decode program events
 ```
 
-## Stellar Skills used
-
-- `skills/cross-chain/SKILL.md` and `skills/cross-chain/layerzero.md` from `stellar/stellar-dev-skill` for LayerZero, USDT0 and CCTP on Stellar (the USDT0 repayment path and the roadmap).
-- `skills/smart-contracts/security.md` from `stellar/stellar-dev-skill` as the review checklist for the contract (authorization on the address loaded from storage, no reinitialization path, TTL extension in hot paths, no arbitrary contract calls).
-- `skills/dapp/SKILL.md` from `stellar/stellar-dev-skill` for the Stellar Wallets Kit v2 static API and the SDK v16+ ESM notes.
-- `SKILL.md` from `yigitcangokmen/stellar-hackathon-turkiye` for the TR Mock Anchor endpoints, limits and asset identifiers.
-- The anchor's own machine-readable guide at `tr-mock-anchor.fly.dev/llms.txt`.
+The scripts import `web/src/lib`, so install the web dependencies first.
 
 ## Design decisions
 
-- **Compose on Blend instead of writing a pool.** The 2025 Paralyx prototype had its own lending pool. Rewriting it in a weekend would reproduce Blend with less safety. Composing gives real interest, liquidations and oracle handling for free and keeps the Paralyx contract small enough to read in five minutes.
-- **User authorizes, contract routes.** Positions belong to the user on Blend, not to Paralyx. If Paralyx disappears, the user's Blend position and the Blend UI still work.
-- **SEP-6 over SEP-24.** The hackathon anchor speaks SEP-6, and programmatic deposits let the app own the whole screen. The adapter is small, so a SEP-24 anchor is a swap, not a rewrite.
-- **Strict-receive path payments.** The anchor needs an exact amount with a memo. Strict receive guarantees the exact Circle USDC amount regardless of testnet pricing quirks.
-- **Everything readable without a wallet.** Views run as simulations against a read-only source account, so the Activity page and the lira limit work before connecting.
-- **Honest mainnet.** When Blend paused borrowing, the app got pool status gating instead of a workaround. Collateral, repayment, withdrawal and the exchange leg run for real; borrowing waits for Blend.
-
-Challenges met on the way:
-
-- **Two USDCs on testnet.** Solved with the DEX and a rebalanced pool, see above.
-- **Anchor watcher only sees classic payments.** A Soroban token transfer from a contract does not show up as a Horizon payment, so the final leg to the treasury is a classic `payment` operation with the memo, sent by the user's own account.
-- **Nested auth from a router.** Verified on testnet with the CLI before writing a single line of frontend, so the riskiest assumption was retired first.
-- **Mainnet fees and rent.** Soroban inclusion fee minimum and wasm storage rent are real numbers; the deploy is documented above so the next team member does not rediscover them.
-- **SDK churn.** Soroban SDK 28 replaced `env.events().publish` with typed events and `update_current_contract_wasm` with `update_current_contract`; Wallets Kit v2 is fully static and moved to JSR. The code targets the current APIs.
+- **Compose on Kamino instead of writing a pool.** Kamino already runs reserves, rate curves, oracle checks and liquidations on Solana. Paralyx stays small enough to read in one sitting.
+- **User owns the position.** The obligation is the user's vanilla obligation; if Paralyx disappears, the position is still visible and manageable in Kamino's own app.
+- **CPI through the v2 handlers.** Keeps the one-transaction, one-signature flow of the Stellar version without asking Kamino to whitelist the program.
+- **Measured amounts in the line.** Fixes the Stellar version's limitation that line totals were requested amounts.
+- **Events through CPI.** Robust to log truncation, readable from transaction metadata.
+- **Wrapping and ATAs in the client.** SOL is wrapped and unwrapped in the same transaction by the user's own instructions; the program stays a router.
+- **One rail interface.** The sandbox and the production rail share `FiatRail`, so the Takas screen does not change when BiLira is wired.
+- **Sandbox is never real.** The `SBX-` prefix, the badge, the receipt note and the README all say so.
+- **Renamed field.** `anchor_tx_id` is now `rail_tx_id`: the Stellar anchor no longer exists, the rail does.
+- **Renamed argument.** DEVIATION: `repay_line`'s `withdraw_collateral` is now `withdraw_ctokens`, because Kamino withdraws in collateral tokens and a lamport-looking name invited a wrong amount. The `LineRepaid` event keeps `withdraw_collateral` and reports the lamports received.
+- **Exact amounts only.** `u64::MAX` is Kamino's "as much as allowed"; the program accepts it only where it means "all of it": repaying the debt, and withdrawing once the debt is gone.
 
 ## Regulatory posture
 
-Paralyx is non-custodial software. It never holds user funds, never sets rates and is not the lender; the Blend pool is the counterparty. It never touches lira; a licensed anchor or exchange is the regulated party for KYC, AML and bank payouts. Product copy says "collateralized liquidity", not consumer credit. Before scaling on mainnet the plan includes a legal opinion on the CASP framework under Türkiye's 2024 crypto asset law and the consumer credit rules that apply to marketing.
+Paralyx is non-custodial software. It never holds user funds, never sets rates and is not the lender; the Kamino market is the counterparty and the obligation belongs to the user. It never touches lira: the regulated fiat party does KYC, AML and bank settlement. For production that party is BiLira: Bilira Kripto Varlık Alım Satım Platformu A.Ş., the issuer of the TRYB lira stablecoin, which redeems TRYB to the holder's own bank account. As of 1 October 2026 BiLira appears on the Capital Markets Board's provisional list of crypto asset service providers operating under the transitional provision of Law 6362; its operating license application was completed in July 2025, and the final authorization has not been verified. No public BiLira off-ramp API was found, so the integration needs a partner agreement. The devnet sandbox moves only devnet USDC and simulates the bank; it is not a payment service. Before mainnet: an audit of `credit_line`, a legal opinion on the CASP framework of Law 7518 and on consumer credit marketing, and BiLira's final authorization.
 
 ## Roadmap
 
-Toward an SCF Build award, Integration track, and InstAward:
+1. **BiLira production rail.** Wire `BiLiraDirectRail` behind the existing interface once a partner agreement and API access exist.
+2. **Mainnet.** Deploy the same program against Kamino's Main Market after an audit; the tests already run against it.
+3. **Pyth FX entitlement.** Move USD/TRY from Reflector to `FX.USD/TRY` on an entitled key.
+4. **Omnichain entry.** USDC from other chains through Circle CCTP.
+5. **Health guardian.** Alerts and a one-click top-up when the health factor drops.
 
-1. **Licensed TRY anchor.** No production Turkish anchor exists yet; the SEP-6 adapter is written so the switch is a home domain change. Bridge and BlindPay are the fallback rails for USD and EUR.
-2. **Mainnet credit.** The contract is live on Blend Fixed; borrowing opens the moment Blend lifts the pool status. An audit of `credit_line` before real volume.
-3. **Idle collateral yield.** Route part of the collateral into a DeFindex vault so the line earns while it is open.
-4. **Omnichain entry.** USDC from any EVM chain through Circle CCTP next to the USDT0 path that already repays lines, so a lira line can be opened from assets that live elsewhere.
-5. **Private payouts.** Stellar Private Payments for salary style lira disbursements once it reaches mainnet.
-6. **Health guardian.** Notifications and one-click top-up from lira when the health factor drops.
+## Lineage
+
+- **2025: Paralyx LSD prototype on Stellar** ([paralyx-LSD/paralyx-protocol](https://github.com/paralyx-LSD/paralyx-protocol)): Ethereum liquid staking tokens bridged to a Soroban lending pool.
+- **September 2026: Paralyx on Stellar**, the rebuild around Blend v2 and a SEP-6 TRY anchor, built at the Rise In x Stellar Pro Hackathon in Istanbul. Preserved at tag `stellar-v1` (testnet contract `CDZ22YMZ…L5Z4B`, mainnet contract `CDCYHJPS…C7ITC`), including the demo narration, jury notes and pitch material.
+- **October 2026: Paralyx on Solana**, this branch: same product, brand and screens, with Kamino Lend as the credit engine, the Solana wallet adapter, Pyth prices and a rail interface for the lira leg.
 
 ## Team
 
-Baturalp Güvenç (contracts, app, integrations) and Abdullah Valisoy (product and presentation).
-
-Paralyx started at a 2025 Stellar hackathon as a cross-chain LSD lending prototype ([paralyx-LSD/paralyx-protocol](https://github.com/paralyx-LSD/paralyx-protocol)). This repository is the 2026 rebuild around what the ecosystem now offers: Blend v2 for credit and anchors for lira.
+Baturalp Güvenç (program, app, integrations) and Abdullah Valisoy (product and presentation).
 
 ## License
 
