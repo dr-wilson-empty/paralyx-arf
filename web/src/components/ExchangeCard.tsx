@@ -156,7 +156,7 @@ export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: 
         { label: t('remainingDebt'), value: `${formatAmount(Math.max(0, position.debtUsdc - repaid))} USDC` },
       ]
       if (fullRepay && withdrawAll) rows.push({ label: t('collateralBack'), value: `${formatAmount(position.collateralSol, 4)} SOL` })
-      setReceipt({ title: t('receiptRepay'), rows, links, note: t('sandboxNote') })
+      setReceipt({ title: t('receiptRepay'), rows, links, note: t('sandboxRepayNote') })
       addHistory(signer.address, { kind: 'repay', title: t('receiptRepay'), amount: `${formatAmount(repaid)} USDC`, detail: `₺${formatAmount(numeric)}`, links })
       await refresh()
     })

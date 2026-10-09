@@ -194,6 +194,7 @@ const dictionary = {
   railPendingBody: { tr: 'Arayüz hazır, bağlantı yok. Gerçek lira hareketi olmadan önce kalan işler:', en: 'The interface is ready, the connection is not. Remaining work before any real lira moves:' },
   sandboxBadge: { tr: 'Sandbox · devnet · gerçek lira yok', en: 'Sandbox · devnet · no real lira' },
   sandboxNote: { tr: 'Bu bir sandbox ödemesi: USDC devnet hazinesine gitti, banka ödemesi simüle edildi. Gerçek lira hareket etmedi.', en: 'This is a sandbox payout: the USDC went to the devnet treasury and the bank payout was simulated. No real lira moved.' },
+  sandboxRepayNote: { tr: 'Bu bir sandbox mevduatı: banka havalesi simüle edildi, USDC devnet hazinesinden geldi. Gerçek lira hareket etmedi.', en: 'This is a sandbox deposit: the bank transfer was simulated and the USDC came from the devnet treasury. No real lira moved.' },
   fxSource: { tr: 'Kur kaynağı', en: 'Rate source' },
   soonTitle: { tr: 'Yol haritası', en: 'Roadmap' },
   soonBilira: { tr: 'Lisanslı lira rayı: BiLira (TRYB ihraççısı) ile üretim çıkışı. FiatRail arayüzü hazır.', en: 'Licensed lira rail: production off-ramp with BiLira, the TRYB issuer. The FiatRail interface is ready.' },
