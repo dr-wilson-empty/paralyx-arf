@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { Connection, Keypair, PublicKey, Transaction, type ParsedInstruction, type PartiallyDecodedInstruction } from '@solana/web3.js'
+import { Connection, Keypair, PublicKey, Transaction, type ParsedInstruction, type PartiallyDecodedInstruction, type SignatureStatus } from '@solana/web3.js'
 import { Account, Contract, Keypair as StellarKeypair, TransactionBuilder, rpc, scValToNative, xdr } from '@stellar/stellar-sdk'
 import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { createMemoInstruction } from '@solana/spl-memo'
@@ -261,15 +261,25 @@ async function startDeposit(e: Env, body: Json) {
 
 async function confirmSignature(connection: Connection, signature: string, lastValidBlockHeight: number): Promise<void> {
   let landed = false
-  for (let attempt = 0; attempt < 40; attempt++) {
-    const [status] = (await connection.getSignatureStatuses([signature])).value
+  for (let attempt = 0; attempt < 90; attempt++) {
+    let status = await signatureStatus(connection, signature, false)
+    if (status === null && !landed && (await connection.getBlockHeight('confirmed').catch(() => 0)) > lastValidBlockHeight) {
+      status = await signatureStatus(connection, signature, true)
+      if (status === null) throw new RailError(`settlement expired before it landed: ${signature}`, 502)
+    }
     if (status?.err) throw new RailError(`settlement failed on chain: ${signature}`, 502)
     if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return
-    landed ||= status !== null
-    if (!landed && (await connection.getBlockHeight('confirmed')) > lastValidBlockHeight) throw new RailError(`settlement expired before it landed: ${signature}`, 502)
+    landed ||= Boolean(status)
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
-  throw new RailError(`settlement not confirmed in time: ${signature}`, 504)
+  throw new RailError(`settlement not confirmed in time, check ${signature} before retrying`, 504)
+}
+
+function signatureStatus(connection: Connection, signature: string, searchTransactionHistory: boolean): Promise<SignatureStatus | null | undefined> {
+  return connection.getSignatureStatuses([signature], { searchTransactionHistory }).then(
+    (result) => result.value[0],
+    () => undefined,
+  )
 }
 
 async function settleDeposit(e: Env, body: Json) {

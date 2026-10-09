@@ -1,6 +1,6 @@
 import { Buffer } from 'buffer'
 import bs58 from 'bs58'
-import { ComputeBudgetProgram, PublicKey, SystemProgram, TransactionInstruction, type Connection, type ParsedTransactionWithMeta } from '@solana/web3.js'
+import { ComputeBudgetProgram, PublicKey, SystemProgram, TransactionInstruction, type Connection, type ParsedTransactionWithMeta, type SignatureStatus } from '@solana/web3.js'
 
 export const KLEND_PROGRAM = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD'
 export const FARMS_PROGRAM = 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr'
@@ -535,12 +535,22 @@ export function repayLineInstructions(d: Deployment, user: PublicKey, repay: big
 export async function confirmSignature(connection: Connection, signature: string, lastValidBlockHeight: number): Promise<void> {
   let landed = false
   for (let attempt = 0; attempt < 120; attempt++) {
-    const [status] = (await connection.getSignatureStatuses([signature])).value
+    let status = await signatureStatus(connection, signature, false)
+    if (status === null && !landed && (await connection.getBlockHeight('confirmed').catch(() => 0)) > lastValidBlockHeight) {
+      status = await signatureStatus(connection, signature, true)
+      if (status === null) throw new Error(`transaction expired before it landed: ${signature}`)
+    }
     if (status?.err) throw new Error(`transaction failed on chain: ${signature}`)
     if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return
-    landed ||= status !== null
-    if (!landed && (await connection.getBlockHeight('confirmed')) > lastValidBlockHeight) throw new Error(`transaction expired before it landed: ${signature}`)
+    landed ||= Boolean(status)
     await new Promise((resolve) => setTimeout(resolve, 1500))
   }
   throw new Error(`transaction not confirmed in time: ${signature}`)
+}
+
+function signatureStatus(connection: Connection, signature: string, searchTransactionHistory: boolean): Promise<SignatureStatus | null | undefined> {
+  return connection.getSignatureStatuses([signature], { searchTransactionHistory }).then(
+    (result) => result.value[0],
+    () => undefined,
+  )
 }
