@@ -20,7 +20,7 @@ export function useShared(): Shared & { events: ActivityEvent[]; allEvents: Acti
   const events = useCached(PROGRAM_ID ? 'events' : null, getActivity, { ttl: 20_000, persist: true, refreshMs: 30_000 })
 
   const refresh = useCallback(async () => {
-    await Promise.all([wallet.refresh(), line.refresh(), position.refresh(), events.refresh(), status.refresh()])
+    await Promise.allSettled([wallet.refresh(), line.refresh(), position.refresh(), events.refresh(), status.refresh()])
   }, [wallet, line, position, events, status])
 
   const allEvents = events.data ?? EMPTY
