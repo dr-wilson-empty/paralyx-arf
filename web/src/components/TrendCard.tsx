@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowUpRight } from 'lucide-react'
+import { formatClock } from '../lib/format'
 
 export interface TrendPoint {
   label: string
@@ -102,7 +103,7 @@ export function hourlyBuckets(events: { closedAt: number; value: number }[], hou
     const end = now - i * 3_600_000
     const start = end - 3_600_000
     const value = events.filter((event) => event.closedAt > start && event.closedAt <= end).reduce((sum, event) => sum + event.value, 0)
-    buckets.push({ label: new Date(end).toLocaleTimeString('tr-TR', { hour: '2-digit' }), value })
+    buckets.push({ label: formatClock(end, { hour: '2-digit' }), value })
   }
   return buckets
 }

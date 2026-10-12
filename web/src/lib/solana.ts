@@ -1,5 +1,6 @@
 import { Connection, LAMPORTS_PER_SOL, PublicKey, TransactionMessage, VersionedTransaction, type AddressLookupTableAccount, type TransactionInstruction } from '@solana/web3.js'
 import { NETWORK, NETWORK_ID, PROGRAM_ID, SOL_DECIMALS, USDC_DECIMALS } from '../config'
+import { formatAmount } from './format'
 import {
   FARMS_PROGRAM,
   KLEND_PROGRAM,
@@ -65,9 +66,7 @@ export function fromUnits(value: bigint | number, decimals: number, places = 2):
   return formatAmount(Number(value) / 10 ** decimals, places)
 }
 
-export function formatAmount(n: number, decimals = 2): string {
-  return n.toLocaleString('tr-TR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-}
+export { formatAmount, formatClock } from './format'
 
 export const lamports = (sol: string | number) => toUnits(sol, SOL_DECIMALS)
 export const usdcUnits = (usdc: string | number) => toUnits(usdc, USDC_DECIMALS)

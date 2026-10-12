@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { NETWORK, PROGRAM_ID, SAFETY_BUFFER, SOL_DECIMALS, SOL_FEE_RESERVE, USDC_DECIMALS } from '../config'
 import type { Position } from '../lib/kamino'
-import { formatAmount, fromUnits, lamports, openLine, repayLine, requestDevnetSol, usdcUnits, WITHDRAW_ALL, type ActivityEvent } from '../lib/solana'
+import { formatAmount, formatClock, fromUnits, lamports, openLine, repayLine, requestDevnetSol, usdcUnits, WITHDRAW_ALL, type ActivityEvent } from '../lib/solana'
 import { useT } from '../lib/i18n'
 import { getSolUsdHistory, getTryPerUsdHistory, useLivePrices, type SolRange } from '../lib/prices'
 import { useCached } from '../lib/store'
@@ -349,7 +349,7 @@ export function Charts() {
   const [solRange, setSolRange] = useState<SolRange>('24h')
   const tryQuery = useCached<Point[]>('chart:try', getTryPerUsdHistory, { ttl: 120_000, persist: true, refreshMs: 120_000 })
   const solQuery = useCached(`chart:sol:${solRange}`, () => getSolUsdHistory(solRange), { ttl: 60_000, persist: true, refreshMs: 60_000 })
-  const stamp = live.updatedAt ? `${t('live')} · ${new Date(live.updatedAt).toLocaleTimeString('tr-TR')}` : t('live')
+  const stamp = live.updatedAt ? `${t('live')} · ${formatClock(live.updatedAt)}` : t('live')
   const ranges = [
     { id: '24h', label: t('range24h') },
     { id: '7d', label: t('range7d') },

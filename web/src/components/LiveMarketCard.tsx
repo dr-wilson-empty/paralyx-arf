@@ -1,4 +1,4 @@
-import { formatAmount } from '../lib/solana'
+import { formatAmount, formatClock } from '../lib/solana'
 import type { MarketOverview } from '../lib/kamino'
 import { useT } from '../lib/i18n'
 import type { LivePrices } from '../lib/prices'
@@ -31,7 +31,7 @@ export function LiveMarketCard({ live, overview, lineCount }: { live: LivePrices
           <span className="live-dot" />
           {t('liveTitle')}
         </div>
-        <span className="text-xs text-mute">{live.updatedAt ? new Date(live.updatedAt).toLocaleTimeString('tr-TR') : ''}</span>
+        <span className="text-xs text-mute">{live.updatedAt ? formatClock(live.updatedAt) : ''}</span>
       </div>
       <div className="mt-5 space-y-3">
         {rows.map((row) => (
