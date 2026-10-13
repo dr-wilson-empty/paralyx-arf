@@ -22,10 +22,10 @@ interface ReceiptData {
   note?: string
 }
 
-const refusalKeys: Record<ArfRefusal, DictKey> = { limit: 'arfReasonLimit', overdue: 'arfReasonOverdue', liquidity: 'arfReasonLiquidity' }
+const refusalKeys: Record<ArfRefusal, DictKey> = { frozen: 'arfReasonFrozen', limit: 'arfReasonLimit', overdue: 'arfReasonOverdue', liquidity: 'arfReasonLiquidity' }
 
 function fundingLabel(t: (key: DictKey) => string, funding: RailFunding): string {
-  if (funding.source === 'arf') return `${t('arfFundedDraw')} ${funding.drawId}`
+  if (funding.source === 'arf') return `${t('arfFundedDraw')} ${funding.seq === undefined ? funding.reference : `#${funding.seq}`}`
   return funding.reason ? `${t('arfFundedTreasury')} · ${t(refusalKeys[funding.reason])}` : t('arfFundedTreasury')
 }
 

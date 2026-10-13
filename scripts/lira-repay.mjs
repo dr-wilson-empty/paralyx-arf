@@ -17,7 +17,7 @@ async function call(action, body) {
 const deposit = await call('deposit', { account: user.publicKey.toBase58(), tryAmount: Number(tryAmount) })
 console.log('deposit instruction', deposit.id, 'for', deposit.usdc.toFixed(6), 'USDC', deposit.iban)
 const settled = await call('settle', { token: deposit.token })
-const funding = settled.funding?.source === 'arf' ? `Arf draw ${settled.funding.drawId}, fee ${settled.funding.fee} USDC, due ${new Date(settled.funding.dueAt * 1000).toISOString()}` : `rail treasury${settled.funding?.reason ? `, Arf refused: ${settled.funding.reason}` : ''}`
+const funding = settled.funding?.source === 'arf' ? `Arf draw #${settled.funding.seq} (${settled.funding.draw}), fee ${settled.funding.fee} USDC, due ${new Date(settled.funding.dueAt * 1000).toISOString()}` : `rail treasury${settled.funding?.reason ? `, Arf refused: ${settled.funding.reason}` : ''}`
 console.log('sandbox settlement', settled.amountOut, 'USDC from', funding, explorer(net, settled.signature))
 const units = BigInt(Math.floor(settled.amountOut * 0.999 * 10 ** d.debt.decimals))
 const signature = await send(connection, user, repayLineInstructions(d, user.publicKey, units, 0n), await lookupTables(connection, net))

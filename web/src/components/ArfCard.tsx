@@ -1,5 +1,5 @@
 import { FlaskConical, Landmark } from 'lucide-react'
-import { addressLink, txLink } from '../config'
+import { addressLink } from '../config'
 import { useArfFacility } from '../lib/arf'
 import { useT, type DictKey } from '../lib/i18n'
 import { ARF_TODO, type ArfDraw } from '../lib/rail'
@@ -55,7 +55,8 @@ export function ArfCard() {
         <Metric label={t('arfTerm')} value={t('arfDays').replace('{n}', String(data.termDays))} />
         <Metric label={t('arfFee')} value={`${formatAmount(data.feeBps / 100)}%`} hint={`${data.feeBps} bps`} />
       </div>
-      {data.overdue > 0 ? <div className="mt-4 rounded-2xl border border-ink px-4 py-2.5 text-xs text-ink">{t('arfOverdueWarning')}</div> : null}
+      {data.frozen ? <div className="mt-4 rounded-2xl border border-ink px-4 py-2.5 text-xs text-ink">{t('arfFrozenWarning')}</div> : null}
+      {!data.frozen && data.overdue > 0 ? <div className="mt-4 rounded-2xl border border-ink px-4 py-2.5 text-xs text-ink">{t('arfOverdueWarning')}</div> : null}
       <div className="mt-6">
         <div className="text-xs text-mute">{t('arfDraws')}</div>
         {data.draws.length === 0 ? (
@@ -63,10 +64,10 @@ export function ArfCard() {
         ) : (
           <ul className="mt-1 divide-y divide-line text-sm">
             {data.draws.slice(0, 5).map((draw) => (
-              <li key={draw.id} className="flex items-center justify-between gap-3 py-2.5">
+              <li key={draw.seq} className="flex items-center justify-between gap-3 py-2.5">
                 <div className="min-w-0">
-                  <a href={txLink(draw.signature)} target="_blank" rel="noreferrer" className="block truncate text-ink underline-offset-2 hover:underline">
-                    {draw.id}
+                  <a href={addressLink(draw.address)} target="_blank" rel="noreferrer" className="block truncate text-ink underline-offset-2 hover:underline">
+                    #{draw.seq} · {draw.reference}
                   </a>
                   <div className="text-xs text-mute">
                     {t('arfDue')} {formatDateTime(draw.dueAt * 1000)}
@@ -82,9 +83,17 @@ export function ArfCard() {
         )}
       </div>
       <p className="mt-4 text-xs text-mute">{t('arfExplainer')}</p>
-      <a className="mt-2 inline-block text-xs underline" href={addressLink(data.facility)} target="_blank" rel="noreferrer">
-        {t('arfFacilityWallet')} · {data.facility.slice(0, 6)}…{data.facility.slice(-4)}
-      </a>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {[
+          { label: t('arfProgram'), address: data.program },
+          { label: t('arfLineAccount'), address: data.line },
+          { label: t('arfVault'), address: data.vault },
+        ].map((link) => (
+          <a key={link.label} className="underline" href={addressLink(link.address)} target="_blank" rel="noreferrer">
+            {link.label} · {link.address.slice(0, 4)}…{link.address.slice(-4)}
+          </a>
+        ))}
+      </div>
     </div>
   )
 }

@@ -26,7 +26,7 @@ const payment = await send(connection, user, [
 console.log('paid the rail', explorer(net, payment))
 const settled = await call('confirm', { token: instruction.token, signature: payment })
 console.log('sandbox settlement', settled.externalTransactionId, settled.amountOut, 'TRY (simulated, no real lira)')
-if (settled.arf?.repaid) console.log('repaid to Arf', settled.arf.repaid, 'USDC for', settled.arf.draws.map((draw) => draw.id).join(', '), explorer(net, settled.arf.signature))
+if (settled.arf?.repaid) console.log('repaid to Arf', settled.arf.repaid, 'USDC for draws', settled.arf.draws.map((draw) => `#${draw.seq}`).join(', '), explorer(net, settled.arf.signature))
 if (settled.arf?.error) console.log('Arf repayment failed, the payout stands:', settled.arf.error)
 const recorded = await send(connection, user, [recordPayout(d, user.publicKey, instruction.id, BigInt(Math.round(settled.amountOut * 100)))], await lookupTables(connection, net))
 console.log('record_payout', explorer(net, recorded))

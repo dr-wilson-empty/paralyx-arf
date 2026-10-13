@@ -2,7 +2,7 @@ import { HAS_SANDBOX_RAIL } from '../config'
 import { getArfFacility } from './rail'
 import { load, useCached } from './store'
 
-const KEY = 'arf'
+const KEY = 'arfLine'
 
 export function useArfFacility() {
   return useCached(HAS_SANDBOX_RAIL ? KEY : null, getArfFacility, { ttl: 15_000, persist: true, refreshMs: 30_000 })

@@ -27,14 +27,14 @@ export interface DepositInstruction {
   token: string
 }
 
-export type ArfRefusal = 'overdue' | 'limit' | 'liquidity'
+export type ArfRefusal = 'frozen' | 'overdue' | 'limit' | 'liquidity'
 
-export type RailFunding = { source: 'arf'; drawId: string; fee: number; dueAt: number } | { source: 'treasury'; reason?: ArfRefusal }
+export type RailFunding = { source: 'arf'; seq?: number; reference: string; draw: string; fee?: number; dueAt?: number } | { source: 'treasury'; reason?: ArfRefusal }
 
 export interface ArfSweep {
   repaid: number
   signature?: string
-  draws: { id: string; amount: number }[]
+  draws: { seq: number; reference: string; amount: number }[]
 }
 
 export interface RailSettlement {
@@ -49,8 +49,9 @@ export interface RailSettlement {
 }
 
 export interface ArfDraw {
-  id: string
-  ref: string
+  seq: number
+  reference: string
+  address: string
   amount: number
   fee: number
   repaid: number
@@ -58,8 +59,6 @@ export interface ArfDraw {
   drawnAt: number
   dueAt: number
   status: 'open' | 'repaid' | 'overdue'
-  signature: string
-  repayments: string[]
 }
 
 export type ArfFacility =
@@ -67,10 +66,15 @@ export type ArfFacility =
   | {
       enabled: true
       sandbox: boolean
-      facility: string
+      program: string
+      line: string
+      provider: string
+      operator: string
+      vault: string
       limit: number
       termDays: number
       feeBps: number
+      frozen: boolean
       outstanding: number
       available: number
       liquidity: number
@@ -224,8 +228,12 @@ export const ARF_TODO: readonly TodoItem[] = [
     en: 'Repayment: the operator repays each draw within its term from cash-out USDC and by converting the lira it received. No new draw while one is overdue.',
   },
   {
-    tr: 'Şeffaflık: her çekiliş ve geri ödeme, tarafların imzaladığı bir memo ile zincirde kalır; böylece Arf\'ın zincir üstü raporlaması bu koridoru da kapsar.',
-    en: 'Transparency: every draw and repayment stays on chain under a memo the parties signed, so Arf\'s on-chain reporting covers this corridor too.',
+    tr: 'Zincir üstü defter: her çekiliş arf_line programında bir hesaptır, her geri ödeme bir olaydır; limit, vade ve ücreti program uygular, Arf hattı dondurabilir. Arf\'ın zincir üstü raporlaması bu koridoru doğrudan okuyabilir.',
+    en: 'On-chain ledger: every draw is an account of the arf_line program and every repayment an event; the program enforces limit, term and fee, and Arf can freeze the line. Arf\'s on-chain reporting can read this corridor directly.',
+  },
+  {
+    tr: 'arf_line\'ın bağımsız denetimi ve mainnet\'e deploy\'u; yükseltme yetkisinin Arf ve operatörün ortak çoklu imzasına ya da zaman kilidine taşınması.',
+    en: 'An independent audit of arf_line and its mainnet deployment; the upgrade authority moves to a multisig of Arf and the operator, or behind a timelock.',
   },
   {
     tr: 'Hukuk: lira bacağı operatörün 7518 sayılı kanun kapsamındaki SPK iznine, hat ise Arf\'ın İsviçre\'deki düzenlemesine dayanır; yayından önce iki tarafın da hukuki incelemesi gerekir.',

@@ -1,8 +1,9 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { Connection, Keypair, PublicKey, Transaction, type ParsedInstruction, type ParsedTransactionWithMeta, type PartiallyDecodedInstruction, type SignatureStatus, type TransactionInstruction } from '@solana/web3.js'
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction, type AccountMeta, type ParsedInstruction, type PartiallyDecodedInstruction, type SignatureStatus } from '@solana/web3.js'
 import { Account, Contract, Keypair as StellarKeypair, TransactionBuilder, rpc, scValToNative, xdr } from '@stellar/stellar-sdk'
-import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { createMemoInstruction } from '@solana/spl-memo'
+import bs58 from 'bs58'
 
 const PYTH_HERMES = 'https://pyth.dourolabs.app/hermes'
 const PYTH_USD_TRY = '032a2eba1c2635bf973e95fb62b2c0705c1be2603b9572cc8d5edeaf8744e058'
@@ -21,24 +22,15 @@ const OBLIGATION_BORROW_SLOTS = 5
 const BORROWED_AMOUNT_SF = 88
 const DEPOSIT_MARGIN_UNITS = 1_500_000n
 const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'
-const ARF_DEFAULTS = { limitUsdc: 500, termDays: 3, feeBps: 10 }
-const ARF_HISTORY_LIMIT = 1000
-const ARF_MAX_REPAY_PARTS = 8
-const ARF_DRAW_MEMO = /^ARF-DRAW (ARF-DR-[0-9A-F]{10}) amount=(\d+) fee=(\d+) due=(\d+) ref=(SBX-DP-[0-9A-F]{10})$/
-const ARF_REPAY_MEMO = /^ARF-REPAY ((?:ARF-DR-[0-9A-F]{10}:\d+)(?:,ARF-DR-[0-9A-F]{10}:\d+)*)$/
+export const ARF_PROGRAM = 'ARF4tQPAqQdGScZK7kF2yWK4tpkp99mPpEkr2rtdvAoC'
+const ARF_MAX_REPAY_DRAWS = 8
 
 type Json = Record<string, unknown>
 
-export interface ArfTerms {
-  limit: bigint
-  termSeconds: number
-  feeBps: number
-}
-
 interface Env {
   treasury: Keypair | null
-  arf: Keypair | null
-  arfTerms: ArfTerms | string
+  arfProgram: PublicKey
+  arfLine: PublicKey | null
   connection: Connection
   usdcMint: string
   market: PublicKey
@@ -51,22 +43,12 @@ function keypair(secret: string): Keypair | null {
   return secret ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret) as number[])) : null
 }
 
-export function arfTerms(source: Record<string, string | undefined>): ArfTerms | string {
-  const limitUsdc = Number(source.ARF_LIMIT_USDC ?? ARF_DEFAULTS.limitUsdc)
-  const termDays = Number(source.ARF_TERM_DAYS ?? ARF_DEFAULTS.termDays)
-  const feeBps = Number(source.ARF_FEE_BPS ?? ARF_DEFAULTS.feeBps)
-  if (!(limitUsdc > 0 && limitUsdc <= 1_000_000)) return 'ARF_LIMIT_USDC must be above 0 and at most 1000000'
-  if (!(Number.isInteger(termDays) && termDays >= 1 && termDays <= 5)) return 'ARF_TERM_DAYS must be a whole number from 1 to 5'
-  if (!(Number.isInteger(feeBps) && feeBps >= 0 && feeBps <= 500)) return 'ARF_FEE_BPS must be a whole number from 0 to 500'
-  return { limit: units(limitUsdc), termSeconds: termDays * 86_400, feeBps }
-}
-
 function env(): Env {
   const secret = process.env.SANDBOX_TREASURY_SECRET ?? ''
   return {
     treasury: keypair(secret),
-    arf: keypair(process.env.ARF_SANDBOX_SECRET ?? ''),
-    arfTerms: arfTerms(process.env),
+    arfProgram: new PublicKey(process.env.ARF_PROGRAM || ARF_PROGRAM),
+    arfLine: process.env.ARF_LINE ? new PublicKey(process.env.ARF_LINE) : null,
     connection: new Connection(process.env.RAIL_RPC ?? 'https://api.devnet.solana.com', 'confirmed'),
     usdcMint: process.env.RAIL_USDC_MINT ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
     market: new PublicKey(process.env.RAIL_MARKET ?? '4GiGCkrwHphwrsG8imKSHhjTtmbjorqYrYwMsRtBu77Z'),
@@ -277,7 +259,7 @@ async function confirmPayout(e: Env, body: Json) {
     externalTransactionId: reference(`${payload.id}:${signature}`),
     signature,
   }
-  if (!e.arf) return settlement
+  if (!e.arfLine) return settlement
   try {
     return { ...settlement, arf: await arfSweep(e) }
   } catch (error) {
@@ -354,12 +336,12 @@ function signatureStatus(connection: Connection, signature: string, searchTransa
   )
 }
 
-async function submit(e: Env, payer: Keypair, instructions: TransactionInstruction[], cosigners: Keypair[] = []): Promise<string> {
+async function submit(e: Env, payer: Keypair, instructions: TransactionInstruction[]): Promise<string> {
   const tx = new Transaction().add(...instructions)
   const latest = await e.connection.getLatestBlockhash('confirmed')
   tx.recentBlockhash = latest.blockhash
   tx.feePayer = payer.publicKey
-  tx.sign(payer, ...cosigners)
+  tx.sign(payer)
   const signature = await e.connection.sendRawTransaction(tx.serialize(), { maxRetries: 5 })
   await confirmSignature(e.connection, signature, latest.lastValidBlockHeight)
   return signature
@@ -374,271 +356,320 @@ function toUsdc(amount: bigint): number {
   return Number(amount) / 10 ** USDC_DECIMALS
 }
 
-export interface ArfKeys {
-  facility: string
-  facilityAta: string
-  treasury: string
-  treasuryAta: string
-  mint: string
+export interface ArfLineState {
+  address: PublicKey
+  provider: PublicKey
+  operator: PublicKey
+  mint: PublicKey
+  vault: PublicKey
+  limit: bigint
+  termSeconds: number
+  feeBps: number
+  frozen: boolean
+  outstanding: bigint
+  drawn: bigint
+  fees: bigint
+  repaid: bigint
+  nextSeq: bigint
+  headSeq: bigint
+  headDueAt: number
 }
 
-export type ArfEntry =
-  | { kind: 'draw'; id: string; ref: string; amount: bigint; fee: bigint; drawnAt: number; dueAt: number; signature: string }
-  | { kind: 'repay'; parts: { id: string; amount: bigint }[]; signature: string }
-
-export interface ArfDraw {
-  id: string
-  ref: string
+export interface ArfDrawState {
+  address: PublicKey
+  line: PublicKey
+  seq: bigint
+  destination: PublicKey
   amount: bigint
   fee: bigint
   repaid: bigint
   drawnAt: number
   dueAt: number
-  signature: string
-  repayments: string[]
+  reference: string
 }
 
-export interface ArfLedger {
-  draws: ArfDraw[]
-  outstanding: bigint
-  drawn: bigint
-  fees: bigint
-  repaid: bigint
-  overdue: number
-  unmatched: bigint
-}
-
-export type ArfRefusal = 'overdue' | 'limit' | 'liquidity'
+export type ArfRefusal = 'frozen' | 'overdue' | 'limit' | 'liquidity'
 
 const ARF_REFUSALS: Record<ArfRefusal, string> = {
+  frozen: 'Arf froze the line',
   overdue: 'a draw is past its due date',
-  limit: 'the facility limit is reached',
-  liquidity: 'the facility holds too little devnet USDC',
+  limit: 'the line limit is reached',
+  liquidity: 'the line holds too little devnet USDC',
 }
 
-export function arfDrawId(depositId: string): string {
-  return depositId.replace(/^SBX-DP-/, 'ARF-DR-')
+function discriminator(namespace: string, name: string): Buffer {
+  return createHash('sha256').update(`${namespace}:${name}`).digest().subarray(0, 8)
 }
 
-export function drawMemo(draw: { id: string; amount: bigint; fee: bigint; dueAt: number; ref: string }): string {
-  return `ARF-DRAW ${draw.id} amount=${draw.amount} fee=${draw.fee} due=${draw.dueAt} ref=${draw.ref}`
+export const ARF_DISCRIMINATORS = {
+  createLine: discriminator('global', 'create_line'),
+  fund: discriminator('global', 'fund'),
+  withdraw: discriminator('global', 'withdraw'),
+  setTerms: discriminator('global', 'set_terms'),
+  draw: discriminator('global', 'draw'),
+  repay: discriminator('global', 'repay'),
+  line: discriminator('account', 'Line'),
+  drawAccount: discriminator('account', 'Draw'),
 }
 
-export function repayMemo(parts: { id: string; amount: bigint }[]): string {
-  return `ARF-REPAY ${parts.map((part) => `${part.id}:${part.amount}`).join(',')}`
+export function arfLineAddress(program: PublicKey, provider: PublicKey, operator: PublicKey, mint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from('line'), provider.toBuffer(), operator.toBuffer(), mint.toBuffer()], program)[0]
 }
 
-export function fundingOf(memo: string): Json {
-  const draw = /ARF-DRAW (ARF-DR-[0-9A-F]{10}) amount=\d+ fee=(\d+) due=(\d+)/.exec(memo)
-  return draw ? { source: 'arf', drawId: draw[1], fee: toUsdc(BigInt(draw[2])), dueAt: Number(draw[3]) } : { source: 'treasury' }
+export function arfVaultAddress(program: PublicKey, line: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from('vault'), line.toBuffer()], program)[0]
 }
 
-function transfersOf(tx: ParsedTransactionWithMeta): { source: string; destination: string; authority: string; mint: string; amount: bigint }[] {
-  return tx.transaction.message.instructions.flatMap((ix) => {
-    if (!('parsed' in ix) || ix.program !== 'spl-token' || ix.parsed?.type !== 'transferChecked') return []
-    const info = ix.parsed.info ?? {}
-    return [{ source: String(info.source), destination: String(info.destination), authority: String(info.authority), mint: String(info.mint), amount: BigInt(String(info.tokenAmount?.amount ?? '0')) }]
-  })
+export function arfDrawAddress(program: PublicKey, line: PublicKey, reference: string): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from('draw'), line.toBuffer(), Buffer.from(reference, 'utf8')], program)[0]
 }
 
-function memosOf(tx: ParsedTransactionWithMeta): string[] {
-  return tx.transaction.message.instructions.flatMap((ix) => ('parsed' in ix && (ix.program === 'spl-memo' || ix.programId.toBase58() === MEMO_PROGRAM) && typeof ix.parsed === 'string' ? [ix.parsed] : []))
+function arfEventAuthority(program: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from('__event_authority')], program)[0]
 }
 
-function signedBy(tx: ParsedTransactionWithMeta, key: string): boolean {
-  return tx.transaction.message.accountKeys.some((account) => account.signer && account.pubkey.toBase58() === key)
-}
-
-export function readArfEntry(tx: ParsedTransactionWithMeta, signature: string, keys: ArfKeys): ArfEntry | null {
-  if (tx.meta?.err) return null
-  const transfers = transfersOf(tx)
-  const moved = (source: string, destination: string, authority: string, amount: bigint) =>
-    transfers.some((transfer) => transfer.source === source && transfer.destination === destination && transfer.authority === authority && transfer.mint === keys.mint && transfer.amount === amount)
-  for (const memo of memosOf(tx)) {
-    const draw = ARF_DRAW_MEMO.exec(memo)
-    if (draw) {
-      const amount = BigInt(draw[2])
-      if (!signedBy(tx, keys.facility) || !moved(keys.facilityAta, keys.treasuryAta, keys.facility, amount)) return null
-      return { kind: 'draw', id: draw[1], ref: draw[5], amount, fee: BigInt(draw[3]), drawnAt: tx.blockTime ?? 0, dueAt: Number(draw[4]), signature }
-    }
-    const repay = ARF_REPAY_MEMO.exec(memo)
-    if (repay) {
-      const parts = repay[1].split(',').map((part) => {
-        const [id, amount] = part.split(':')
-        return { id, amount: BigInt(amount) }
-      })
-      const total = parts.reduce((sum, part) => sum + part.amount, 0n)
-      if (!signedBy(tx, keys.treasury) || !moved(keys.treasuryAta, keys.facilityAta, keys.treasury, total)) return null
-      return { kind: 'repay', parts, signature }
-    }
+export function decodeArfLine(address: PublicKey, data: Buffer): ArfLineState {
+  if (data.length < 214 || !data.subarray(0, 8).equals(ARF_DISCRIMINATORS.line)) throw new RailError('the account is not an Arf line', 500)
+  const key = (at: number) => new PublicKey(data.subarray(at, at + 32))
+  return {
+    address,
+    provider: key(8),
+    operator: key(40),
+    mint: key(72),
+    vault: key(104),
+    limit: data.readBigUInt64LE(136),
+    termSeconds: Number(data.readBigInt64LE(144)),
+    feeBps: data.readUInt16LE(152),
+    frozen: data[154] === 1,
+    outstanding: data.readBigUInt64LE(155),
+    drawn: data.readBigUInt64LE(163),
+    fees: data.readBigUInt64LE(171),
+    repaid: data.readBigUInt64LE(179),
+    nextSeq: data.readBigUInt64LE(187),
+    headSeq: data.readBigUInt64LE(195),
+    headDueAt: Number(data.readBigInt64LE(203)),
   }
-  return null
 }
 
-export function owed(draw: ArfDraw): bigint {
+export function decodeArfDraw(address: PublicKey, data: Buffer): ArfDrawState {
+  if (data.length < 158 || !data.subarray(0, 8).equals(ARF_DISCRIMINATORS.drawAccount)) throw new RailError('the account is not an Arf draw', 500)
+  const length = data.readUInt32LE(154)
+  return {
+    address,
+    line: new PublicKey(data.subarray(8, 40)),
+    seq: data.readBigUInt64LE(40),
+    destination: new PublicKey(data.subarray(48, 80)),
+    amount: data.readBigUInt64LE(80),
+    fee: data.readBigUInt64LE(88),
+    repaid: data.readBigUInt64LE(96),
+    drawnAt: Number(data.readBigInt64LE(104)),
+    dueAt: Number(data.readBigInt64LE(112)),
+    reference: data.subarray(158, 158 + length).toString('utf8'),
+  }
+}
+
+export function arfFee(amount: bigint, feeBps: number): bigint {
+  return (amount * BigInt(feeBps) + 9_999n) / 10_000n
+}
+
+export function arfOwed(draw: Pick<ArfDrawState, 'amount' | 'fee' | 'repaid'>): bigint {
   const total = draw.amount + draw.fee
   return draw.repaid >= total ? 0n : total - draw.repaid
 }
 
-export function arfStatus(draw: ArfDraw, now: number): 'repaid' | 'overdue' | 'open' {
-  if (owed(draw) === 0n) return 'repaid'
+export function arfOpenDraws(line: Pick<ArfLineState, 'headSeq'>, draws: ArfDrawState[]): ArfDrawState[] {
+  return draws.filter((draw) => draw.seq >= line.headSeq).sort((a, b) => (a.seq < b.seq ? -1 : a.seq > b.seq ? 1 : 0))
+}
+
+export function arfStatus(line: Pick<ArfLineState, 'headSeq'>, draw: ArfDrawState, now: number): 'repaid' | 'overdue' | 'open' {
+  if (draw.seq < line.headSeq || arfOwed(draw) === 0n) return 'repaid'
   return draw.dueAt < now ? 'overdue' : 'open'
 }
 
-export function arfLedger(entries: ArfEntry[], now: number): ArfLedger {
-  const draws = new Map<string, ArfDraw>()
-  for (const entry of entries) {
-    if (entry.kind !== 'draw') continue
-    const known = draws.get(entry.id)
-    if (known) {
-      known.amount += entry.amount
-      known.fee += entry.fee
-      known.drawnAt = Math.min(known.drawnAt, entry.drawnAt)
-      known.dueAt = Math.min(known.dueAt, entry.dueAt)
-      continue
-    }
-    draws.set(entry.id, { id: entry.id, ref: entry.ref, amount: entry.amount, fee: entry.fee, repaid: 0n, drawnAt: entry.drawnAt, dueAt: entry.dueAt, signature: entry.signature, repayments: [] })
-  }
-  let unmatched = 0n
-  for (const entry of entries) {
-    if (entry.kind !== 'repay') continue
-    for (const part of entry.parts) {
-      const draw = draws.get(part.id)
-      if (!draw) {
-        unmatched += part.amount
-        continue
-      }
-      draw.repaid += part.amount
-      if (!draw.repayments.includes(entry.signature)) draw.repayments.push(entry.signature)
-    }
-  }
-  const list = [...draws.values()].sort((a, b) => b.drawnAt - a.drawnAt || b.dueAt - a.dueAt)
-  const total = (pick: (draw: ArfDraw) => bigint) => list.reduce((sum, draw) => sum + pick(draw), 0n)
-  return {
-    draws: list,
-    outstanding: total(owed),
-    drawn: total((draw) => draw.amount),
-    fees: total((draw) => draw.fee),
-    repaid: total((draw) => draw.repaid),
-    overdue: list.filter((draw) => arfStatus(draw, now) === 'overdue').length,
-    unmatched,
-  }
+export function arfRefusal(line: ArfLineState, amount: bigint, liquidity: bigint, now: number): ArfRefusal | null {
+  if (line.frozen) return 'frozen'
+  if (line.headSeq < line.nextSeq && now > line.headDueAt) return 'overdue'
+  if (line.outstanding + amount + arfFee(amount, line.feeBps) > line.limit) return 'limit'
+  if (liquidity < amount) return 'liquidity'
+  return null
 }
 
-export function arfDraw(ledger: ArfLedger, terms: ArfTerms, amount: bigint, liquidity: bigint, now: number): { fee: bigint; dueAt: number } | { refused: ArfRefusal } {
-  const fee = (amount * BigInt(terms.feeBps) + 9_999n) / 10_000n
-  if (ledger.overdue > 0) return { refused: 'overdue' }
-  if (ledger.outstanding + amount + fee > terms.limit) return { refused: 'limit' }
-  if (liquidity < amount) return { refused: 'liquidity' }
-  return { fee, dueAt: now + terms.termSeconds }
-}
-
-export function arfAllocate(ledger: ArfLedger, available: bigint): { id: string; amount: bigint }[] {
-  const parts: { id: string; amount: bigint }[] = []
+export function arfAllocate(open: ArfDrawState[], available: bigint): { amount: bigint; accounts: PublicKey[]; parts: { seq: bigint; reference: string; amount: bigint }[] } {
+  const parts: { seq: bigint; reference: string; amount: bigint }[] = []
   let left = available
-  for (const draw of [...ledger.draws].sort((a, b) => a.dueAt - b.dueAt || a.drawnAt - b.drawnAt)) {
-    if (left <= 0n || parts.length >= ARF_MAX_REPAY_PARTS) break
-    const due = owed(draw)
-    if (due === 0n) continue
+  for (const draw of open.slice(0, ARF_MAX_REPAY_DRAWS)) {
+    const due = arfOwed(draw)
+    if (left === 0n || due === 0n) break
     const amount = due < left ? due : left
-    parts.push({ id: draw.id, amount })
+    parts.push({ seq: draw.seq, reference: draw.reference, amount })
     left -= amount
+    if (amount < due) break
   }
-  return parts
+  const amount = parts.reduce((sum, part) => sum + part.amount, 0n)
+  return { amount, accounts: open.slice(0, Math.min(open.length, parts.length + 1)).map((draw) => draw.address), parts }
 }
 
-function requireArf(e: Env): { facility: Keypair; terms: ArfTerms } {
-  if (!e.arf) throw new RailError('the Arf sandbox facility is not configured', 503)
-  if (typeof e.arfTerms === 'string') throw new RailError(e.arfTerms, 500)
-  return { facility: e.arf, terms: e.arfTerms }
+function accountMeta(pubkey: PublicKey, isWritable = false, isSigner = false): AccountMeta {
+  return { pubkey, isSigner, isWritable }
 }
 
-function arfKeys(e: Env, facility: Keypair, treasury: Keypair): ArfKeys {
-  const mint = new PublicKey(e.usdcMint)
-  return {
-    facility: facility.publicKey.toBase58(),
-    facilityAta: getAssociatedTokenAddressSync(mint, facility.publicKey).toBase58(),
-    treasury: treasury.publicKey.toBase58(),
-    treasuryAta: getAssociatedTokenAddressSync(mint, treasury.publicKey).toBase58(),
-    mint: e.usdcMint,
-  }
+function u64(value: bigint): Buffer {
+  const buffer = Buffer.alloc(8)
+  buffer.writeBigUInt64LE(value)
+  return buffer
 }
 
-const arfTransactions = new Map<string, ParsedTransactionWithMeta>()
+function i64(value: number): Buffer {
+  const buffer = Buffer.alloc(8)
+  buffer.writeBigInt64LE(BigInt(value))
+  return buffer
+}
 
-export async function arfEntries(e: Pick<Env, 'connection'>, keys: ArfKeys): Promise<ArfEntry[]> {
-  const history = await e.connection.getSignaturesForAddress(new PublicKey(keys.facilityAta), { limit: ARF_HISTORY_LIMIT })
-  const signatures = history.filter((entry) => !entry.err && /ARF-(DRAW|REPAY) /.test(entry.memo ?? '')).map((entry) => entry.signature)
-  for (const signature of signatures) {
-    if (arfTransactions.has(signature)) continue
-    const tx = await e.connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-    if (!tx) throw new RailError(`Arf ledger transaction ${signature} is not readable yet, try again`, 503)
-    arfTransactions.set(signature, tx)
-  }
-  const current = new Set(signatures)
-  for (const signature of arfTransactions.keys()) if (!current.has(signature)) arfTransactions.delete(signature)
-  return signatures.flatMap((signature) => {
-    const tx = arfTransactions.get(signature)
-    const entry = tx ? readArfEntry(tx, signature, keys) : null
-    return entry ? [entry] : []
-  })
+function u16(value: number): Buffer {
+  const buffer = Buffer.alloc(2)
+  buffer.writeUInt16LE(value)
+  return buffer
+}
+
+function text(value: string): Buffer {
+  const bytes = Buffer.from(value, 'utf8')
+  const length = Buffer.alloc(4)
+  length.writeUInt32LE(bytes.length)
+  return Buffer.concat([length, bytes])
+}
+
+function arfInstruction(program: PublicKey, keys: AccountMeta[], data: Buffer, remaining: AccountMeta[] = []): TransactionInstruction {
+  return new TransactionInstruction({ programId: program, keys: [...keys, accountMeta(arfEventAuthority(program)), accountMeta(program), ...remaining], data })
+}
+
+export function arfCreateLineIx(program: PublicKey, provider: PublicKey, operator: PublicKey, mint: PublicKey, limit: bigint, termSeconds: number, feeBps: number, tokenProgram = TOKEN_PROGRAM_ID): TransactionInstruction {
+  const line = arfLineAddress(program, provider, operator, mint)
+  return arfInstruction(
+    program,
+    [accountMeta(provider, true, true), accountMeta(operator), accountMeta(mint), accountMeta(line, true), accountMeta(arfVaultAddress(program, line), true), accountMeta(tokenProgram), accountMeta(SystemProgram.programId)],
+    Buffer.concat([ARF_DISCRIMINATORS.createLine, u64(limit), i64(termSeconds), u16(feeBps)]),
+  )
+}
+
+type ArfLineKeys = Pick<ArfLineState, 'address' | 'mint' | 'vault'>
+
+export function arfFundIx(program: PublicKey, line: ArfLineKeys, provider: PublicKey, source: PublicKey, amount: bigint, tokenProgram = TOKEN_PROGRAM_ID): TransactionInstruction {
+  return arfInstruction(
+    program,
+    [accountMeta(provider, false, true), accountMeta(line.address), accountMeta(line.mint), accountMeta(line.vault, true), accountMeta(source, true), accountMeta(tokenProgram)],
+    Buffer.concat([ARF_DISCRIMINATORS.fund, u64(amount)]),
+  )
+}
+
+export function arfWithdrawIx(program: PublicKey, line: ArfLineKeys, provider: PublicKey, destination: PublicKey, amount: bigint, tokenProgram = TOKEN_PROGRAM_ID): TransactionInstruction {
+  return arfInstruction(
+    program,
+    [accountMeta(provider, false, true), accountMeta(line.address), accountMeta(line.mint), accountMeta(line.vault, true), accountMeta(destination, true), accountMeta(tokenProgram)],
+    Buffer.concat([ARF_DISCRIMINATORS.withdraw, u64(amount)]),
+  )
+}
+
+export function arfSetTermsIx(program: PublicKey, line: PublicKey, provider: PublicKey, limit: bigint, termSeconds: number, feeBps: number, frozen: boolean): TransactionInstruction {
+  return arfInstruction(program, [accountMeta(provider, false, true), accountMeta(line, true)], Buffer.concat([ARF_DISCRIMINATORS.setTerms, u64(limit), i64(termSeconds), u16(feeBps), Buffer.from([frozen ? 1 : 0])]))
+}
+
+export function arfDrawIx(program: PublicKey, line: ArfLineKeys, operator: PublicKey, reference: string, amount: bigint, destination: PublicKey, tokenProgram = TOKEN_PROGRAM_ID): TransactionInstruction {
+  return arfInstruction(
+    program,
+    [
+      accountMeta(operator, true, true),
+      accountMeta(line.address, true),
+      accountMeta(arfDrawAddress(program, line.address, reference), true),
+      accountMeta(line.mint),
+      accountMeta(line.vault, true),
+      accountMeta(destination, true),
+      accountMeta(tokenProgram),
+      accountMeta(SystemProgram.programId),
+    ],
+    Buffer.concat([ARF_DISCRIMINATORS.draw, text(reference), u64(amount)]),
+  )
+}
+
+export function arfRepayIx(program: PublicKey, line: ArfLineKeys, payer: PublicKey, source: PublicKey, amount: bigint, draws: PublicKey[], tokenProgram = TOKEN_PROGRAM_ID): TransactionInstruction {
+  return arfInstruction(
+    program,
+    [accountMeta(payer, false, true), accountMeta(line.address, true), accountMeta(line.mint), accountMeta(line.vault, true), accountMeta(source, true), accountMeta(tokenProgram)],
+    Buffer.concat([ARF_DISCRIMINATORS.repay, u64(amount)]),
+    draws.map((draw) => accountMeta(draw, true)),
+  )
+}
+
+export async function readArf(e: Pick<Env, 'connection' | 'arfProgram' | 'usdcMint'>, address: PublicKey, operator: PublicKey, withDraws: boolean): Promise<{ line: ArfLineState; draws: ArfDrawState[]; liquidity: bigint }> {
+  const vault = arfVaultAddress(e.arfProgram, address)
+  const [[account, vaultAccount], accounts] = await Promise.all([
+    e.connection.getMultipleAccountsInfo([address, vault]),
+    withDraws
+      ? e.connection.getProgramAccounts(e.arfProgram, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ARF_DISCRIMINATORS.drawAccount) } }, { memcmp: { offset: 8, bytes: address.toBase58() } }] })
+      : Promise.resolve([]),
+  ])
+  if (!account || !account.owner.equals(e.arfProgram)) throw new RailError('ARF_LINE is not an account of the Arf program', 500)
+  const line = decodeArfLine(address, account.data)
+  if (!line.operator.equals(operator)) throw new RailError("the Arf line's operator is not the sandbox treasury", 500)
+  if (!line.mint.equals(new PublicKey(e.usdcMint)) || !line.vault.equals(vault)) throw new RailError('the Arf line lends another mint or names another vault', 500)
+  const liquidity = vaultAccount && vaultAccount.data.length >= 72 ? vaultAccount.data.readBigUInt64LE(64) : 0n
+  return { line, draws: accounts.map(({ pubkey, account: entry }) => decodeArfDraw(pubkey, entry.data)), liquidity }
+}
+
+function arfFunding(draw: ArfDrawState): Json {
+  return { source: 'arf', seq: Number(draw.seq), reference: draw.reference, draw: draw.address.toBase58(), fee: toUsdc(draw.fee), dueAt: draw.dueAt }
 }
 
 async function arfSweep(e: Env) {
   const treasury = requireTreasury(e)
-  const { facility } = requireArf(e)
-  const keys = arfKeys(e, facility, treasury)
-  const mint = new PublicKey(e.usdcMint)
-  const treasuryAta = new PublicKey(keys.treasuryAta)
-  const facilityAta = new PublicKey(keys.facilityAta)
-  const [entries, available] = await Promise.all([arfEntries(e, keys), tokenUnits(e, treasuryAta)])
-  const parts = arfAllocate(arfLedger(entries, Math.floor(Date.now() / 1000)), available)
-  if (parts.length === 0) return { repaid: 0, draws: [] }
-  const total = parts.reduce((sum, part) => sum + part.amount, 0n)
-  const signature = await submit(e, treasury, [
-    createAssociatedTokenAccountIdempotentInstruction(treasury.publicKey, facilityAta, facility.publicKey, mint),
-    createTransferCheckedInstruction(treasuryAta, mint, facilityAta, treasury.publicKey, total, USDC_DECIMALS),
-    createMemoInstruction(repayMemo(parts), [treasury.publicKey]),
-  ])
-  return { repaid: toUsdc(total), signature, draws: parts.map((part) => ({ id: part.id, amount: toUsdc(part.amount) })) }
+  if (!e.arfLine) throw new RailError('the Arf line is not configured', 503)
+  const { line, draws } = await readArf(e, e.arfLine, treasury.publicKey, true)
+  const treasuryAta = getAssociatedTokenAddressSync(new PublicKey(e.usdcMint), treasury.publicKey)
+  const allocation = arfAllocate(arfOpenDraws(line, draws), await tokenUnits(e, treasuryAta))
+  if (allocation.amount === 0n) return { repaid: 0, draws: [] }
+  const signature = await submit(e, treasury, [arfRepayIx(e.arfProgram, line, treasury.publicKey, treasuryAta, allocation.amount, allocation.accounts)])
+  return { repaid: toUsdc(allocation.amount), signature, draws: allocation.parts.map((part) => ({ seq: Number(part.seq), reference: part.reference, amount: toUsdc(part.amount) })) }
 }
 
 async function arfState(e: Env) {
-  if (!e.arf) return { enabled: false }
+  if (!e.arfLine) return { enabled: false }
   const treasury = requireTreasury(e)
-  const { facility, terms } = requireArf(e)
-  const keys = arfKeys(e, facility, treasury)
+  const { line, draws, liquidity } = await readArf(e, e.arfLine, treasury.publicKey, true)
   const now = Math.floor(Date.now() / 1000)
-  const [entries, liquidity] = await Promise.all([arfEntries(e, keys), tokenUnits(e, new PublicKey(keys.facilityAta))])
-  const ledger = arfLedger(entries, now)
   return {
     enabled: true,
     sandbox: true,
-    facility: keys.facility,
-    limit: toUsdc(terms.limit),
-    termDays: terms.termSeconds / 86_400,
-    feeBps: terms.feeBps,
-    outstanding: toUsdc(ledger.outstanding),
-    available: toUsdc(ledger.outstanding >= terms.limit ? 0n : terms.limit - ledger.outstanding),
+    program: e.arfProgram.toBase58(),
+    line: line.address.toBase58(),
+    provider: line.provider.toBase58(),
+    operator: line.operator.toBase58(),
+    vault: line.vault.toBase58(),
+    limit: toUsdc(line.limit),
+    termDays: Math.round((line.termSeconds / 86_400) * 100) / 100,
+    feeBps: line.feeBps,
+    frozen: line.frozen,
+    outstanding: toUsdc(line.outstanding),
+    available: toUsdc(line.outstanding >= line.limit ? 0n : line.limit - line.outstanding),
     liquidity: toUsdc(liquidity),
-    drawn: toUsdc(ledger.drawn),
-    fees: toUsdc(ledger.fees),
-    repaid: toUsdc(ledger.repaid),
-    overdue: ledger.overdue,
-    count: ledger.draws.length,
-    draws: ledger.draws.slice(0, 10).map((draw) => ({
-      id: draw.id,
-      ref: draw.ref,
-      amount: toUsdc(draw.amount),
-      fee: toUsdc(draw.fee),
-      repaid: toUsdc(draw.repaid),
-      owed: toUsdc(owed(draw)),
-      drawnAt: draw.drawnAt,
-      dueAt: draw.dueAt,
-      status: arfStatus(draw, now),
-      signature: draw.signature,
-      repayments: draw.repayments,
-    })),
+    drawn: toUsdc(line.drawn),
+    fees: toUsdc(line.fees),
+    repaid: toUsdc(line.repaid),
+    overdue: arfOpenDraws(line, draws).filter((draw) => draw.dueAt < now).length,
+    count: Number(line.nextSeq),
+    draws: [...draws]
+      .sort((a, b) => (a.seq < b.seq ? 1 : a.seq > b.seq ? -1 : 0))
+      .slice(0, 10)
+      .map((draw) => ({
+        seq: Number(draw.seq),
+        reference: draw.reference,
+        address: draw.address.toBase58(),
+        amount: toUsdc(draw.amount),
+        fee: toUsdc(draw.fee),
+        repaid: toUsdc(draw.repaid),
+        owed: toUsdc(arfOwed(draw)),
+        drawnAt: draw.drawnAt,
+        dueAt: draw.dueAt,
+        status: arfStatus(line, draw, now),
+      })),
     updatedAt: now,
   }
 }
@@ -646,50 +677,50 @@ async function arfState(e: Env) {
 async function settleDeposit(e: Env, body: Json) {
   const treasury = requireTreasury(e)
   const payload = verify(e, String(body.token), 'deposit')
+  const id = String(payload.id)
   const mint = new PublicKey(e.usdcMint)
   const treasuryAta = getAssociatedTokenAddressSync(mint, treasury.publicKey)
+  const drawn = async () => {
+    if (!e.arfLine) return null
+    const drawAddress = arfDrawAddress(e.arfProgram, e.arfLine, id)
+    const existing = await e.connection.getAccountInfo(drawAddress)
+    if (!existing) return null
+    const history = await e.connection.getSignaturesForAddress(drawAddress, { limit: 100 })
+    return { id, status: 'completed', sandbox: true, amountOut: Number(payload.usdc) / 10 ** USDC_DECIMALS, signature: history.at(-1)?.signature, reused: true, funding: arfFunding(decodeArfDraw(drawAddress, existing.data)) }
+  }
+  const earlier = await drawn()
+  if (earlier) return earlier
   const recent = await e.connection.getSignaturesForAddress(treasuryAta, { limit: 100 })
-  const previous = recent.find((entry) => entry.memo?.includes(String(payload.id)) && !entry.err)
-  if (previous) return { id: payload.id, status: 'completed', sandbox: true, amountOut: Number(payload.usdc) / 10 ** USDC_DECIMALS, signature: previous.signature, reused: true, funding: fundingOf(previous.memo ?? '') }
+  const previous = recent.find((entry) => entry.memo?.includes(id) && !entry.err)
+  if (previous) return { id, status: 'completed', sandbox: true, amountOut: Number(payload.usdc) / 10 ** USDC_DECIMALS, signature: previous.signature, reused: true, funding: { source: 'treasury' } }
   const amount = BigInt(String(payload.usdc))
   const user = new PublicKey(String(payload.account))
   await requireRepayment(e, user, amount)
   const userAta = getAssociatedTokenAddressSync(mint, user)
-  const payUser = [
-    createAssociatedTokenAccountIdempotentInstruction(treasury.publicKey, userAta, user, mint),
-    createTransferCheckedInstruction(treasuryAta, mint, userAta, treasury.publicKey, amount, USDC_DECIMALS),
-  ]
+  const openAta = createAssociatedTokenAccountIdempotentInstruction(treasury.publicKey, userAta, user, mint)
   let refused: ArfRefusal | null = null
-  if (e.arf) {
-    const { facility, terms } = requireArf(e)
-    const keys = arfKeys(e, facility, treasury)
-    const facilityAta = new PublicKey(keys.facilityAta)
-    const now = Math.floor(Date.now() / 1000)
-    const [entries, liquidity] = await Promise.all([arfEntries(e, keys), tokenUnits(e, facilityAta)])
-    const draw = arfDraw(arfLedger(entries, now), terms, amount, liquidity, now)
-    if ('refused' in draw) {
-      refused = draw.refused
-    } else {
-      const id = arfDrawId(String(payload.id))
-      const signature = await submit(
-        e,
-        treasury,
-        [
-          createAssociatedTokenAccountIdempotentInstruction(treasury.publicKey, treasuryAta, treasury.publicKey, mint),
-          createTransferCheckedInstruction(facilityAta, mint, treasuryAta, facility.publicKey, amount, USDC_DECIMALS),
-          ...payUser,
-          createMemoInstruction(drawMemo({ id, amount, fee: draw.fee, dueAt: draw.dueAt, ref: String(payload.id) }), [treasury.publicKey, facility.publicKey]),
-        ],
-        [facility],
-      )
-      return { id: payload.id, status: 'completed', sandbox: true, amountOut: toUsdc(amount), signature, funding: { source: 'arf', drawId: id, fee: toUsdc(draw.fee), dueAt: draw.dueAt } }
+  if (e.arfLine) {
+    const { line, liquidity } = await readArf(e, e.arfLine, treasury.publicKey, false)
+    refused = arfRefusal(line, amount, liquidity, Math.floor(Date.now() / 1000))
+    if (!refused) {
+      let signature: string
+      try {
+        signature = await submit(e, treasury, [openAta, arfDrawIx(e.arfProgram, line, treasury.publicKey, id, amount, userAta), createMemoInstruction(id, [treasury.publicKey])])
+      } catch (error) {
+        const raced = await drawn()
+        if (raced) return raced
+        throw error
+      }
+      const drawAddress = arfDrawAddress(e.arfProgram, line.address, id)
+      const created = await e.connection.getAccountInfo(drawAddress)
+      return { id, status: 'completed', sandbox: true, amountOut: toUsdc(amount), signature, funding: created ? arfFunding(decodeArfDraw(drawAddress, created.data)) : { source: 'arf', reference: id, draw: drawAddress.toBase58() } }
     }
   }
   if ((await tokenUnits(e, treasuryAta)) < amount) {
-    throw new RailError(refused ? `the Arf facility cannot fund this deposit (${ARF_REFUSALS[refused]}) and the sandbox treasury does not hold enough devnet USDC` : 'the sandbox treasury does not hold enough devnet USDC, cash out first or top it up', 409)
+    throw new RailError(refused ? `the Arf line cannot fund this deposit (${ARF_REFUSALS[refused]}) and the sandbox treasury does not hold enough devnet USDC` : 'the sandbox treasury does not hold enough devnet USDC, cash out first or top it up', 409)
   }
-  const signature = await submit(e, treasury, [...payUser, createMemoInstruction(String(payload.id), [treasury.publicKey])])
-  return { id: payload.id, status: 'completed', sandbox: true, amountOut: toUsdc(amount), signature, funding: refused ? { source: 'treasury', reason: refused } : { source: 'treasury' } }
+  const signature = await submit(e, treasury, [openAta, createTransferCheckedInstruction(treasuryAta, mint, userAta, treasury.publicKey, amount, USDC_DECIMALS), createMemoInstruction(id, [treasury.publicKey])])
+  return { id, status: 'completed', sandbox: true, amountOut: toUsdc(amount), signature, funding: refused ? { source: 'treasury', reason: refused } : { source: 'treasury' } }
 }
 
 async function treasuryState(e: Env) {

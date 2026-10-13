@@ -1,223 +1,202 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Keypair, PublicKey } from '../web/src/lib/cli.ts'
-import { arfAllocate, arfDraw, arfDrawId, arfEntries, arfLedger, arfStatus, arfTerms, drawMemo, fundingOf, owed, readArfEntry, repayMemo } from '../web/api/rail.ts'
+import {
+  ARF_DISCRIMINATORS,
+  arfAllocate,
+  arfCreateLineIx,
+  arfDrawAddress,
+  arfDrawIx,
+  arfFee,
+  arfLineAddress,
+  arfOpenDraws,
+  arfOwed,
+  arfRefusal,
+  arfRepayIx,
+  arfSetTermsIx,
+  arfStatus,
+  arfVaultAddress,
+  decodeArfDraw,
+  decodeArfLine,
+  readArf,
+} from '../web/api/rail.ts'
 
 const USDC = 1_000_000n
 const DAY = 86_400
+const PROGRAM = new PublicKey('ARF4tQPAqQdGScZK7kF2yWK4tpkp99mPpEkr2rtdvAoC')
 const TOKEN = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-const MEMO = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
-const key = () => Keypair.generate().publicKey.toBase58()
-const keys = { facility: key(), facilityAta: key(), treasury: key(), treasuryAta: key(), mint: key() }
-const terms = { limit: 100n * USDC, termSeconds: 3 * DAY, feeBps: 10 }
+const key = () => Keypair.generate().publicKey
+const provider = key()
+const operator = key()
+const mint = key()
+const address = arfLineAddress(PROGRAM, provider, operator, mint)
+const vault = arfVaultAddress(PROGRAM, address)
 
-function parsed({ signers, transfers = [], memos = [], err = null, blockTime = 1_000 }) {
-  return {
-    blockTime,
-    meta: { err },
-    transaction: {
-      message: {
-        accountKeys: [...signers.map((signer) => ({ pubkey: new PublicKey(signer), signer: true, writable: true })), { pubkey: new PublicKey(key()), signer: false, writable: true }],
-        instructions: [
-          ...transfers.map((transfer) => ({
-            program: 'spl-token',
-            programId: TOKEN,
-            parsed: {
-              type: 'transferChecked',
-              info: { source: transfer.source, destination: transfer.destination, authority: transfer.authority, mint: transfer.mint ?? keys.mint, tokenAmount: { amount: String(transfer.amount), decimals: 6 } },
-            },
-          })),
-          ...memos.map((text) => ({ program: 'spl-memo', programId: MEMO, parsed: text })),
-        ],
-      },
-    },
-  }
+function lineState(overrides = {}) {
+  return { address, provider, operator, mint, vault, limit: 100n * USDC, termSeconds: 3 * DAY, feeBps: 10, frozen: false, outstanding: 0n, drawn: 0n, fees: 0n, repaid: 0n, nextSeq: 0n, headSeq: 0n, headDueAt: 0, ...overrides }
 }
 
-function drawTx(id, amount, { fee = 0n, dueAt = 1_000 + 3 * DAY, blockTime = 1_000, signers = [keys.treasury, keys.facility], transfer = {} } = {}) {
-  const memo = drawMemo({ id, amount, fee, dueAt, ref: id.replace('ARF-DR-', 'SBX-DP-') })
-  return parsed({
-    signers,
-    blockTime,
-    memos: [memo],
-    transfers: [{ source: keys.facilityAta, destination: keys.treasuryAta, authority: keys.facility, amount, ...transfer }],
+function drawState(seq, amount, overrides = {}) {
+  const reference = `SBX-DP-${String(seq).padStart(10, '0')}`
+  return { address: arfDrawAddress(PROGRAM, address, reference), line: address, seq: BigInt(seq), destination: key(), amount, fee: 0n, repaid: 0n, drawnAt: 1_000, dueAt: 1_000 + 3 * DAY, reference, ...overrides }
+}
+
+function encodeLine(line) {
+  const data = Buffer.alloc(278)
+  ARF_DISCRIMINATORS.line.copy(data, 0)
+  for (const [at, value] of [[8, line.provider], [40, line.operator], [72, line.mint], [104, line.vault]]) value.toBuffer().copy(data, at)
+  data.writeBigUInt64LE(line.limit, 136)
+  data.writeBigInt64LE(BigInt(line.termSeconds), 144)
+  data.writeUInt16LE(line.feeBps, 152)
+  data[154] = line.frozen ? 1 : 0
+  for (const [at, value] of [[155, line.outstanding], [163, line.drawn], [171, line.fees], [179, line.repaid], [187, line.nextSeq], [195, line.headSeq]]) data.writeBigUInt64LE(value, at)
+  data.writeBigInt64LE(BigInt(line.headDueAt), 203)
+  return data
+}
+
+function encodeDraw(draw) {
+  const data = Buffer.alloc(190)
+  ARF_DISCRIMINATORS.drawAccount.copy(data, 0)
+  draw.line.toBuffer().copy(data, 8)
+  data.writeBigUInt64LE(draw.seq, 40)
+  draw.destination.toBuffer().copy(data, 48)
+  for (const [at, value] of [[80, draw.amount], [88, draw.fee], [96, draw.repaid]]) data.writeBigUInt64LE(value, at)
+  data.writeBigInt64LE(BigInt(draw.drawnAt), 104)
+  data.writeBigInt64LE(BigInt(draw.dueAt), 112)
+  data.writeUInt32LE(Buffer.byteLength(draw.reference), 154)
+  data.write(draw.reference, 158, 'utf8')
+  return data
+}
+
+test('discriminators match the ones the arf_line program was built with', () => {
+  const hex = Object.fromEntries(Object.entries(ARF_DISCRIMINATORS).map(([name, bytes]) => [name, Buffer.from(bytes).toString('hex')]))
+  assert.deepEqual(hex, {
+    createLine: 'fc976a4228116949',
+    fund: 'dabc6fdd9871ae07',
+    withdraw: 'b712469c946da122',
+    setTerms: 'c612c5e2dce657ad',
+    draw: '3d283eb81fb01882',
+    repay: 'ea674352d0eadba6',
+    line: '0f497d99b40d50bb',
+    drawAccount: 'e18329de7a1492ca',
   })
-}
-
-function repayTx(parts, { signers = [keys.treasury], amount = parts.reduce((sum, part) => sum + part.amount, 0n) } = {}) {
-  return parsed({ signers, memos: [repayMemo(parts)], transfers: [{ source: keys.treasuryAta, destination: keys.facilityAta, authority: keys.treasury, amount }] })
-}
-
-function draw(id, amount, options = {}) {
-  return readArfEntry(drawTx(id, amount, options), `sig-${id}-${options.blockTime ?? 1_000}`, keys)
-}
-
-function repay(parts, signature = `repay-${parts.map((part) => part.id).join('+')}`) {
-  return readArfEntry(repayTx(parts), signature, keys)
-}
-
-const A = 'ARF-DR-AAAAAAAAAA'
-const B = 'ARF-DR-BBBBBBBBBB'
-const C = 'ARF-DR-CCCCCCCCCC'
-
-test('reads the facility terms from the environment and refuses terms outside the Arf range', () => {
-  assert.deepEqual(arfTerms({}), { limit: 500n * USDC, termSeconds: 3 * DAY, feeBps: 10 })
-  assert.deepEqual(arfTerms({ ARF_LIMIT_USDC: '250.5', ARF_TERM_DAYS: '5', ARF_FEE_BPS: '0' }), { limit: 250_500_000n, termSeconds: 5 * DAY, feeBps: 0 })
-  assert.match(arfTerms({ ARF_TERM_DAYS: '6' }), /ARF_TERM_DAYS/)
-  assert.match(arfTerms({ ARF_TERM_DAYS: '1.5' }), /ARF_TERM_DAYS/)
-  assert.match(arfTerms({ ARF_LIMIT_USDC: '0' }), /ARF_LIMIT_USDC/)
-  assert.match(arfTerms({ ARF_LIMIT_USDC: 'abc' }), /ARF_LIMIT_USDC/)
-  assert.match(arfTerms({ ARF_FEE_BPS: '-1' }), /ARF_FEE_BPS/)
 })
 
-test('derives the draw id from the deposit id', () => {
-  assert.equal(arfDrawId('SBX-DP-0A1B2C3D4E'), 'ARF-DR-0A1B2C3D4E')
+test('decodes a line and a draw at the offsets of the program accounts', () => {
+  const line = lineState({ limit: 500n * USDC, feeBps: 25, frozen: true, outstanding: 7n, drawn: 11n, fees: 2n, repaid: 6n, nextSeq: 4n, headSeq: 3n, headDueAt: 1_800_000_000 })
+  assert.deepEqual(decodeArfLine(address, encodeLine(line)), line)
+  const draw = drawState(3, 2_015_491n, { fee: 2_016n, repaid: 1n })
+  assert.deepEqual(decodeArfDraw(draw.address, encodeDraw(draw)), draw)
+  assert.throws(() => decodeArfLine(address, encodeDraw(draw)), /not an Arf line/)
+  assert.throws(() => decodeArfDraw(draw.address, encodeLine(line)), /not an Arf draw/)
 })
 
-test('reads a draw the facility signed and paid to the treasury', () => {
-  const entry = draw(A, 7n * USDC, { fee: 7_000n, dueAt: 9_999, blockTime: 1_234 })
-  assert.deepEqual(entry, { kind: 'draw', id: A, ref: 'SBX-DP-AAAAAAAAAA', amount: 7n * USDC, fee: 7_000n, drawnAt: 1_234, dueAt: 9_999, signature: `sig-${A}-1234` })
+test('rounds the fee up and owes amount plus fee less what was repaid', () => {
+  assert.equal(arfFee(2_015_491n, 10), 2_016n)
+  assert.equal(arfFee(1n, 10), 1n)
+  assert.equal(arfFee(10n * USDC, 0), 0n)
+  assert.equal(arfOwed({ amount: 5n, fee: 1n, repaid: 2n }), 4n)
+  assert.equal(arfOwed({ amount: 5n, fee: 1n, repaid: 9n }), 0n)
 })
 
-test('ignores draws the facility did not sign or did not pay as written', () => {
-  assert.equal(draw(A, USDC, { signers: [keys.treasury] }), null)
-  assert.equal(draw(A, USDC, { transfer: { amount: USDC - 1n } }), null)
-  assert.equal(draw(A, USDC, { transfer: { destination: key() } }), null)
-  assert.equal(draw(A, USDC, { transfer: { source: key() } }), null)
-  assert.equal(draw(A, USDC, { transfer: { authority: keys.treasury } }), null)
-  assert.equal(draw(A, USDC, { transfer: { mint: key() } }), null)
-  const failed = drawTx(A, USDC)
-  failed.meta.err = { InstructionError: [1, 'Custom'] }
-  assert.equal(readArfEntry(failed, 'sig', keys), null)
+test('refuses a draw the program would refuse, in the program order', () => {
+  const now = 10_000
+  assert.equal(arfRefusal(lineState(), 10n * USDC, 10n * USDC, now), null)
+  assert.equal(arfRefusal(lineState({ frozen: true, nextSeq: 1n, headDueAt: 1 }), USDC, USDC, now), 'frozen')
+  assert.equal(arfRefusal(lineState({ nextSeq: 1n, headDueAt: now - 1 }), USDC, USDC, now), 'overdue')
+  assert.equal(arfRefusal(lineState({ nextSeq: 1n, headDueAt: now }), USDC, USDC, now), null)
+  assert.equal(arfRefusal(lineState({ headSeq: 1n, nextSeq: 1n, headDueAt: 0 }), USDC, USDC, now), null)
+  assert.equal(arfRefusal(lineState({ outstanding: 90n * USDC }), 10n * USDC, 10n * USDC, now), 'limit')
+  assert.equal(arfRefusal(lineState({ outstanding: 90n * USDC, feeBps: 0 }), 10n * USDC, 10n * USDC, now), null)
+  assert.equal(arfRefusal(lineState(), 10n * USDC, 10n * USDC - 1n, now), 'liquidity')
 })
 
-test('reads a repayment the treasury signed and paid back in full', () => {
-  assert.deepEqual(repay([{ id: A, amount: 2n * USDC }, { id: B, amount: 500_000n }], 'r1'), {
-    kind: 'repay',
-    parts: [
-      { id: A, amount: 2n * USDC },
-      { id: B, amount: 500_000n },
-    ],
-    signature: 'r1',
-  })
-  assert.equal(readArfEntry(repayTx([{ id: A, amount: USDC }], { signers: [keys.facility] }), 'r', keys), null)
-  assert.equal(readArfEntry(repayTx([{ id: A, amount: USDC }], { amount: USDC - 1n }), 'r', keys), null)
+test('lists open draws from the head and tells repaid, open and overdue apart', () => {
+  const line = lineState({ headSeq: 1n, nextSeq: 4n })
+  const draws = [drawState(3, USDC), drawState(0, USDC, { repaid: USDC }), drawState(1, USDC, { dueAt: 50 }), drawState(2, USDC)]
+  assert.deepEqual(arfOpenDraws(line, draws).map((draw) => draw.seq), [1n, 2n, 3n])
+  assert.equal(arfStatus(line, draws[1], 100), 'repaid')
+  assert.equal(arfStatus(line, draws[2], 100), 'overdue')
+  assert.equal(arfStatus(line, draws[3], 100), 'open')
 })
 
-test('ignores memos that only look like Arf records', () => {
-  for (const memo of [`ARF-DRAW ${A} amount=1 fee=0 due=1`, `ARF-REPAY ${A}`, `ARF-REPAY ${A}:1,`, `ARF-DRAW ${A.toLowerCase()} amount=1 fee=0 due=1 ref=SBX-DP-AAAAAAAAAA`, 'SBX-DP-AAAAAAAAAA']) {
-    const tx = parsed({ signers: [keys.treasury, keys.facility], memos: [memo], transfers: [{ source: keys.facilityAta, destination: keys.treasuryAta, authority: keys.facility, amount: 1n }] })
-    assert.equal(readArfEntry(tx, 'sig', keys), null, memo)
-  }
+test('repays the oldest draws first, stops inside a draw and names the next open draw', () => {
+  const open = [drawState(0, 2n * USDC, { fee: 2_000n }), drawState(1, 3n * USDC, { fee: 3_000n }), drawState(2, 4n * USDC)]
+  const partial = arfAllocate(open, 3n * USDC)
+  assert.equal(partial.amount, 3n * USDC)
+  assert.deepEqual(partial.parts.map((part) => [part.seq, part.amount]), [[0n, 2_002_000n], [1n, 998_000n]])
+  assert.deepEqual(partial.accounts, [open[0].address, open[1].address, open[2].address])
+  const first = arfAllocate(open, 2_002_000n)
+  assert.deepEqual(first.parts.map((part) => part.seq), [0n])
+  assert.deepEqual(first.accounts, [open[0].address, open[1].address])
+  const all = arfAllocate(open, 100n * USDC)
+  assert.equal(all.amount, 9_005_000n)
+  assert.deepEqual(all.accounts, open.map((draw) => draw.address))
+  assert.deepEqual(arfAllocate(open, 0n), { amount: 0n, accounts: [open[0].address], parts: [] })
+  assert.deepEqual(arfAllocate([], 5n * USDC), { amount: 0n, accounts: [], parts: [] })
+  const many = Array.from({ length: 10 }, (_, seq) => drawState(seq, USDC))
+  const capped = arfAllocate(many, 100n * USDC)
+  assert.equal(capped.parts.length, 8)
+  assert.equal(capped.accounts.length, 9)
 })
 
-test('builds the ledger: owed amounts, partial repayments, overdue draws and unknown draw ids', () => {
-  const entries = [
-    repay([{ id: A, amount: 3n * USDC }, { id: C, amount: USDC }], 'r1'),
-    draw(B, 4n * USDC, { fee: 4_000n, dueAt: 500, blockTime: 200 }),
-    draw(A, 10n * USDC, { fee: 10_000n, dueAt: 5_000, blockTime: 100 }),
-  ]
-  const ledger = arfLedger(entries, 1_000)
+test('builds draw, repay, create and terms instructions in the account order of the program', () => {
+  const line = lineState()
+  const destination = key()
+  const draw = arfDrawIx(PROGRAM, line, operator, 'SBX-DP-AAAAAAAAAA', 7n, destination)
   assert.deepEqual(
-    ledger.draws.map((entry) => [entry.id, entry.amount, entry.fee, entry.repaid, owed(entry), arfStatus(entry, 1_000), entry.repayments]),
+    draw.keys.map((meta) => [meta.pubkey.toBase58(), meta.isSigner, meta.isWritable]),
     [
-      [B, 4n * USDC, 4_000n, 0n, 4_004_000n, 'overdue', []],
-      [A, 10n * USDC, 10_000n, 3n * USDC, 7_010_000n, 'open', ['r1']],
+      [operator.toBase58(), true, true],
+      [address.toBase58(), false, true],
+      [arfDrawAddress(PROGRAM, address, 'SBX-DP-AAAAAAAAAA').toBase58(), false, true],
+      [mint.toBase58(), false, false],
+      [vault.toBase58(), false, true],
+      [destination.toBase58(), false, true],
+      [TOKEN.toBase58(), false, false],
+      ['11111111111111111111111111111111', false, false],
+      [PublicKey.findProgramAddressSync([Buffer.from('__event_authority')], PROGRAM)[0].toBase58(), false, false],
+      [PROGRAM.toBase58(), false, false],
     ],
   )
-  assert.equal(ledger.outstanding, 11_014_000n)
-  assert.equal(ledger.drawn, 14n * USDC)
-  assert.equal(ledger.fees, 14_000n)
-  assert.equal(ledger.repaid, 3n * USDC)
-  assert.equal(ledger.overdue, 1)
-  assert.equal(ledger.unmatched, USDC)
+  assert.equal(draw.data.toString('hex'), '3d283eb81fb01882' + '11000000' + Buffer.from('SBX-DP-AAAAAAAAAA').toString('hex') + '0700000000000000')
+
+  const source = key()
+  const draws = [key(), key()]
+  const repay = arfRepayIx(PROGRAM, line, operator, source, 9n, draws)
+  assert.deepEqual(repay.keys.slice(0, 6).map((meta) => meta.pubkey.toBase58()), [operator, address, mint, vault, source, TOKEN].map((value) => value.toBase58()))
+  assert.deepEqual(repay.keys.slice(8).map((meta) => [meta.pubkey.toBase58(), meta.isWritable]), draws.map((draw) => [draw.toBase58(), true]))
+  assert.equal(repay.data.toString('hex'), 'ea674352d0eadba6' + '0900000000000000')
+
+  const create = arfCreateLineIx(PROGRAM, provider, operator, mint, 500n * USDC, 3 * DAY, 10)
+  assert.deepEqual(create.keys.slice(3, 5).map((meta) => meta.pubkey.toBase58()), [address.toBase58(), vault.toBase58()])
+  assert.equal(create.data.toString('hex'), 'fc976a4228116949' + '0065cd1d00000000' + '80f4030000000000' + '0a00')
+  assert.equal(arfSetTermsIx(PROGRAM, address, provider, USDC, DAY, 0, true).data.toString('hex'), 'c612c5e2dce657ad' + '40420f0000000000' + '8051010000000000' + '0000' + '01')
 })
 
-test('a fully repaid draw owes nothing and is never overdue', () => {
-  const ledger = arfLedger([draw(A, 2n * USDC, { fee: 2_000n, dueAt: 10 }), repay([{ id: A, amount: 2_002_000n }])], 1_000)
-  assert.equal(owed(ledger.draws[0]), 0n)
-  assert.equal(arfStatus(ledger.draws[0], 1_000), 'repaid')
-  assert.equal(ledger.overdue, 0)
-  assert.equal(ledger.outstanding, 0n)
-})
-
-test('counts a draw that landed twice for one deposit as both transfers', () => {
-  const ledger = arfLedger([draw(A, USDC, { blockTime: 300, dueAt: 900 }), draw(A, USDC, { blockTime: 100, dueAt: 700 })], 0)
-  assert.equal(ledger.draws.length, 1)
-  assert.equal(ledger.draws[0].amount, 2n * USDC)
-  assert.equal(ledger.draws[0].drawnAt, 100)
-  assert.equal(ledger.draws[0].dueAt, 700)
-})
-
-test('draws while the line has room, with the fee rounded up and the term from now', () => {
-  const ledger = arfLedger([draw(A, 50n * USDC, { dueAt: 10_000 })], 1_000)
-  assert.deepEqual(arfDraw(ledger, terms, 49n * USDC, 49n * USDC, 1_000), { fee: 49_000n, dueAt: 1_000 + 3 * DAY })
-  assert.deepEqual(arfDraw(arfLedger([], 0), terms, 1n, 1n, 0), { fee: 1n, dueAt: 3 * DAY })
-  assert.deepEqual(arfDraw(arfLedger([], 0), { ...terms, feeBps: 0 }, USDC, USDC, 0), { fee: 0n, dueAt: 3 * DAY })
-})
-
-test('refuses a draw past the limit, with an overdue draw open, or beyond the facility balance', () => {
-  const ledger = arfLedger([draw(A, 50n * USDC, { dueAt: 10_000 })], 1_000)
-  assert.deepEqual(arfDraw(ledger, terms, 50n * USDC, 100n * USDC, 1_000), { refused: 'limit' })
-  assert.deepEqual(arfDraw(arfLedger([draw(A, USDC, { dueAt: 999 })], 1_000), terms, USDC, 100n * USDC, 1_000), { refused: 'overdue' })
-  assert.deepEqual(arfDraw(ledger, terms, 10n * USDC, 10n * USDC - 1n, 1_000), { refused: 'liquidity' })
-})
-
-test('repays the earliest due draws first, splits the last one and caps the parts per transaction', () => {
-  const ledger = arfLedger([draw(A, 5n * USDC, { dueAt: 3_000 }), draw(B, 5n * USDC, { dueAt: 1_000 }), draw(C, 5n * USDC, { dueAt: 2_000 }), repay([{ id: C, amount: 5n * USDC }])], 0)
-  assert.deepEqual(arfAllocate(ledger, 7n * USDC), [
-    { id: B, amount: 5n * USDC },
-    { id: A, amount: 2n * USDC },
-  ])
-  assert.deepEqual(arfAllocate(ledger, 0n), [])
-  assert.deepEqual(arfAllocate(arfLedger([], 0), 10n * USDC), [])
-  const many = arfLedger(
-    Array.from({ length: 10 }, (_, index) => draw(`ARF-DR-${String(index).padStart(10, '0')}`, USDC, { dueAt: 1_000 + index })),
-    0,
-  )
-  const parts = arfAllocate(many, 100n * USDC)
-  assert.equal(parts.length, 8)
-  assert.equal(parts[0].id, 'ARF-DR-0000000000')
-})
-
-test('tells an Arf-funded settlement from a treasury one by the memo the RPC returns', () => {
-  const memo = `[95] ${drawMemo({ id: A, amount: 5n * USDC, fee: 5_000n, dueAt: 1_700_000_000, ref: 'SBX-DP-AAAAAAAAAA' })}`
-  assert.deepEqual(fundingOf(memo), { source: 'arf', drawId: A, fee: 0.005, dueAt: 1_700_000_000 })
-  assert.deepEqual(fundingOf('[17] SBX-DP-AAAAAAAAAA'), { source: 'treasury' })
-})
-
-function rpc(history, transactions) {
-  const fetched = []
-  return {
-    fetched,
-    connection: {
-      getSignaturesForAddress: async () => history,
-      getParsedTransaction: async (signature) => {
-        fetched.push(signature)
-        return transactions[signature] ?? null
-      },
+test('reads the line, its draws and the vault balance, and refuses a line run by someone else', async () => {
+  const line = lineState({ nextSeq: 2n, headSeq: 1n })
+  const draws = [drawState(0, USDC, { repaid: USDC }), drawState(1, 2n * USDC)]
+  const vaultData = Buffer.alloc(165)
+  vaultData.writeBigUInt64LE(42n * USDC, 64)
+  let filters = null
+  const connection = {
+    getMultipleAccountsInfo: async (keys) => {
+      assert.deepEqual(keys.map((value) => value.toBase58()), [address.toBase58(), vault.toBase58()])
+      return [{ owner: PROGRAM, data: encodeLine(line) }, { owner: TOKEN, data: vaultData }]
+    },
+    getProgramAccounts: async (_program, options) => {
+      filters = options.filters
+      return draws.map((draw) => ({ pubkey: draw.address, account: { data: encodeDraw(draw) } }))
     },
   }
-}
-
-test('reads only Arf records from the line history, one transaction at a time, and keeps them', async () => {
-  const draws = { 'cache-d1': drawTx(A, USDC), 'cache-r1': repayTx([{ id: A, amount: USDC }]) }
-  const history = [
-    { signature: 'cache-r1', err: null, memo: `[44] ${repayMemo([{ id: A, amount: USDC }])}` },
-    { signature: 'cache-top-up', err: null, memo: null },
-    { signature: 'cache-failed', err: { InstructionError: [0, 'Custom'] }, memo: '[20] ARF-DRAW whatever' },
-    { signature: 'cache-d1', err: null, memo: `[90] ${drawMemo({ id: A, amount: USDC, fee: 0n, dueAt: 1, ref: 'SBX-DP-AAAAAAAAAA' })}` },
-  ]
-  const first = rpc(history, draws)
-  const entries = await arfEntries(first, keys)
-  assert.deepEqual(first.fetched, ['cache-r1', 'cache-d1'])
-  assert.deepEqual(entries.map((entry) => entry.kind), ['repay', 'draw'])
-  const second = rpc(history, draws)
-  assert.equal((await arfEntries(second, keys)).length, 2)
-  assert.deepEqual(second.fetched, [])
-})
-
-test('refuses to build the ledger while an Arf record cannot be read', async () => {
-  const history = [{ signature: 'missing-d1', err: null, memo: '[90] ARF-DRAW ARF-DR-AAAAAAAAAA amount=1 fee=0 due=1 ref=SBX-DP-AAAAAAAAAA' }]
-  await assert.rejects(arfEntries(rpc(history, {}), keys), /not readable yet/)
+  const e = { connection, arfProgram: PROGRAM, usdcMint: mint.toBase58() }
+  const read = await readArf(e, address, operator, true)
+  assert.equal(read.liquidity, 42n * USDC)
+  assert.deepEqual(read.line, line)
+  assert.deepEqual(read.draws.map((draw) => draw.seq), [0n, 1n])
+  assert.equal(filters[1].memcmp.bytes, address.toBase58())
+  await assert.rejects(readArf(e, address, key(), true), /operator is not the sandbox treasury/)
+  await assert.rejects(readArf({ ...e, usdcMint: key().toBase58() }, address, operator, false), /another mint/)
+  await assert.rejects(readArf({ ...e, connection: { ...connection, getMultipleAccountsInfo: async () => [{ owner: key(), data: encodeLine(line) }, null] } }, address, operator, false), /not an account of the Arf program/)
 })
