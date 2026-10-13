@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { Connection, Keypair, PublicKey, Transaction, type ParsedInstruction, type PartiallyDecodedInstruction, type SignatureStatus } from '@solana/web3.js'
+import { Connection, Keypair, PublicKey, Transaction, type ParsedInstruction, type ParsedTransactionWithMeta, type PartiallyDecodedInstruction, type SignatureStatus, type TransactionInstruction } from '@solana/web3.js'
 import { Account, Contract, Keypair as StellarKeypair, TransactionBuilder, rpc, scValToNative, xdr } from '@stellar/stellar-sdk'
 import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { createMemoInstruction } from '@solana/spl-memo'
@@ -20,11 +20,26 @@ const OBLIGATION_BORROW_STRIDE = 200
 const OBLIGATION_BORROW_SLOTS = 5
 const BORROWED_AMOUNT_SF = 88
 const DEPOSIT_MARGIN_UNITS = 1_500_000n
+const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'
+const ARF_DEFAULTS = { limitUsdc: 500, termDays: 3, feeBps: 10 }
+const ARF_HISTORY_LIMIT = 1000
+const ARF_FETCH_CHUNK = 25
+const ARF_MAX_REPAY_PARTS = 8
+const ARF_DRAW_MEMO = /^ARF-DRAW (ARF-DR-[0-9A-F]{10}) amount=(\d+) fee=(\d+) due=(\d+) ref=(SBX-DP-[0-9A-F]{10})$/
+const ARF_REPAY_MEMO = /^ARF-REPAY ((?:ARF-DR-[0-9A-F]{10}:\d+)(?:,ARF-DR-[0-9A-F]{10}:\d+)*)$/
 
 type Json = Record<string, unknown>
 
+export interface ArfTerms {
+  limit: bigint
+  termSeconds: number
+  feeBps: number
+}
+
 interface Env {
   treasury: Keypair | null
+  arf: Keypair | null
+  arfTerms: ArfTerms | string
   connection: Connection
   usdcMint: string
   market: PublicKey
@@ -33,11 +48,26 @@ interface Env {
   signingKey: Buffer
 }
 
+function keypair(secret: string): Keypair | null {
+  return secret ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret) as number[])) : null
+}
+
+export function arfTerms(source: Record<string, string | undefined>): ArfTerms | string {
+  const limitUsdc = Number(source.ARF_LIMIT_USDC ?? ARF_DEFAULTS.limitUsdc)
+  const termDays = Number(source.ARF_TERM_DAYS ?? ARF_DEFAULTS.termDays)
+  const feeBps = Number(source.ARF_FEE_BPS ?? ARF_DEFAULTS.feeBps)
+  if (!(limitUsdc > 0 && limitUsdc <= 1_000_000)) return 'ARF_LIMIT_USDC must be above 0 and at most 1000000'
+  if (!(Number.isInteger(termDays) && termDays >= 1 && termDays <= 5)) return 'ARF_TERM_DAYS must be a whole number from 1 to 5'
+  if (!(Number.isInteger(feeBps) && feeBps >= 0 && feeBps <= 500)) return 'ARF_FEE_BPS must be a whole number from 0 to 500'
+  return { limit: units(limitUsdc), termSeconds: termDays * 86_400, feeBps }
+}
+
 function env(): Env {
   const secret = process.env.SANDBOX_TREASURY_SECRET ?? ''
-  const treasury = secret ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret) as number[])) : null
   return {
-    treasury,
+    treasury: keypair(secret),
+    arf: keypair(process.env.ARF_SANDBOX_SECRET ?? ''),
+    arfTerms: arfTerms(process.env),
     connection: new Connection(process.env.RAIL_RPC ?? 'https://api.devnet.solana.com', 'confirmed'),
     usdcMint: process.env.RAIL_USDC_MINT ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
     market: new PublicKey(process.env.RAIL_MARKET ?? '4GiGCkrwHphwrsG8imKSHhjTtmbjorqYrYwMsRtBu77Z'),
@@ -236,10 +266,10 @@ async function confirmPayout(e: Env, body: Json) {
     const amount = info.tokenAmount?.amount ?? info.amount
     return (ix.parsed.type === 'transferChecked' || ix.parsed.type === 'transfer') && info.destination === treasuryAta && info.authority === payload.account && String(amount) === payload.usdc
   })
-  const memoMatches = instructions.some((ix) => 'parsed' in ix && (ix.program === 'spl-memo' || ix.programId.toBase58() === 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr') && String(ix.parsed) === payload.id)
+  const memoMatches = instructions.some((ix) => 'parsed' in ix && (ix.program === 'spl-memo' || ix.programId.toBase58() === MEMO_PROGRAM) && String(ix.parsed) === payload.id)
   if (!paid) throw new RailError('the transaction does not pay the quoted USDC to the sandbox treasury')
   if (!memoMatches) throw new RailError('the transaction memo does not match the payout id')
-  return {
+  const settlement = {
     id: payload.id,
     status: 'completed',
     sandbox: true,
@@ -247,6 +277,12 @@ async function confirmPayout(e: Env, body: Json) {
     amountOut: Number(payload.tryAmount),
     externalTransactionId: reference(`${payload.id}:${signature}`),
     signature,
+  }
+  if (!e.arf) return settlement
+  try {
+    return { ...settlement, arf: await arfSweep(e) }
+  } catch (error) {
+    return { ...settlement, arf: { error: error instanceof Error ? error.message : String(error) } }
   }
 }
 
@@ -319,6 +355,298 @@ function signatureStatus(connection: Connection, signature: string, searchTransa
   )
 }
 
+async function submit(e: Env, payer: Keypair, instructions: TransactionInstruction[], cosigners: Keypair[] = []): Promise<string> {
+  const tx = new Transaction().add(...instructions)
+  const latest = await e.connection.getLatestBlockhash('confirmed')
+  tx.recentBlockhash = latest.blockhash
+  tx.feePayer = payer.publicKey
+  tx.sign(payer, ...cosigners)
+  const signature = await e.connection.sendRawTransaction(tx.serialize(), { maxRetries: 5 })
+  await confirmSignature(e.connection, signature, latest.lastValidBlockHeight)
+  return signature
+}
+
+async function tokenUnits(e: Env, account: PublicKey): Promise<bigint> {
+  const balance = await e.connection.getTokenAccountBalance(account).catch(() => null)
+  return BigInt(balance?.value.amount ?? '0')
+}
+
+function toUsdc(amount: bigint): number {
+  return Number(amount) / 10 ** USDC_DECIMALS
+}
+
+export interface ArfKeys {
+  facility: string
+  facilityAta: string
+  treasury: string
+  treasuryAta: string
+  mint: string
+}
+
+export type ArfEntry =
+  | { kind: 'draw'; id: string; ref: string; amount: bigint; fee: bigint; drawnAt: number; dueAt: number; signature: string }
+  | { kind: 'repay'; parts: { id: string; amount: bigint }[]; signature: string }
+
+export interface ArfDraw {
+  id: string
+  ref: string
+  amount: bigint
+  fee: bigint
+  repaid: bigint
+  drawnAt: number
+  dueAt: number
+  signature: string
+  repayments: string[]
+}
+
+export interface ArfLedger {
+  draws: ArfDraw[]
+  outstanding: bigint
+  drawn: bigint
+  fees: bigint
+  repaid: bigint
+  overdue: number
+  unmatched: bigint
+}
+
+export type ArfRefusal = 'overdue' | 'limit' | 'liquidity'
+
+const ARF_REFUSALS: Record<ArfRefusal, string> = {
+  overdue: 'a draw is past its due date',
+  limit: 'the facility limit is reached',
+  liquidity: 'the facility holds too little devnet USDC',
+}
+
+export function arfDrawId(depositId: string): string {
+  return depositId.replace(/^SBX-DP-/, 'ARF-DR-')
+}
+
+export function drawMemo(draw: { id: string; amount: bigint; fee: bigint; dueAt: number; ref: string }): string {
+  return `ARF-DRAW ${draw.id} amount=${draw.amount} fee=${draw.fee} due=${draw.dueAt} ref=${draw.ref}`
+}
+
+export function repayMemo(parts: { id: string; amount: bigint }[]): string {
+  return `ARF-REPAY ${parts.map((part) => `${part.id}:${part.amount}`).join(',')}`
+}
+
+export function fundingOf(memo: string): Json {
+  const draw = /ARF-DRAW (ARF-DR-[0-9A-F]{10}) amount=\d+ fee=(\d+) due=(\d+)/.exec(memo)
+  return draw ? { source: 'arf', drawId: draw[1], fee: toUsdc(BigInt(draw[2])), dueAt: Number(draw[3]) } : { source: 'treasury' }
+}
+
+function transfersOf(tx: ParsedTransactionWithMeta): { source: string; destination: string; authority: string; mint: string; amount: bigint }[] {
+  return tx.transaction.message.instructions.flatMap((ix) => {
+    if (!('parsed' in ix) || ix.program !== 'spl-token' || ix.parsed?.type !== 'transferChecked') return []
+    const info = ix.parsed.info ?? {}
+    return [{ source: String(info.source), destination: String(info.destination), authority: String(info.authority), mint: String(info.mint), amount: BigInt(String(info.tokenAmount?.amount ?? '0')) }]
+  })
+}
+
+function memosOf(tx: ParsedTransactionWithMeta): string[] {
+  return tx.transaction.message.instructions.flatMap((ix) => ('parsed' in ix && (ix.program === 'spl-memo' || ix.programId.toBase58() === MEMO_PROGRAM) && typeof ix.parsed === 'string' ? [ix.parsed] : []))
+}
+
+function signedBy(tx: ParsedTransactionWithMeta, key: string): boolean {
+  return tx.transaction.message.accountKeys.some((account) => account.signer && account.pubkey.toBase58() === key)
+}
+
+export function readArfEntry(tx: ParsedTransactionWithMeta, signature: string, keys: ArfKeys): ArfEntry | null {
+  if (tx.meta?.err) return null
+  const transfers = transfersOf(tx)
+  const moved = (source: string, destination: string, authority: string, amount: bigint) =>
+    transfers.some((transfer) => transfer.source === source && transfer.destination === destination && transfer.authority === authority && transfer.mint === keys.mint && transfer.amount === amount)
+  for (const memo of memosOf(tx)) {
+    const draw = ARF_DRAW_MEMO.exec(memo)
+    if (draw) {
+      const amount = BigInt(draw[2])
+      if (!signedBy(tx, keys.facility) || !moved(keys.facilityAta, keys.treasuryAta, keys.facility, amount)) return null
+      return { kind: 'draw', id: draw[1], ref: draw[5], amount, fee: BigInt(draw[3]), drawnAt: tx.blockTime ?? 0, dueAt: Number(draw[4]), signature }
+    }
+    const repay = ARF_REPAY_MEMO.exec(memo)
+    if (repay) {
+      const parts = repay[1].split(',').map((part) => {
+        const [id, amount] = part.split(':')
+        return { id, amount: BigInt(amount) }
+      })
+      const total = parts.reduce((sum, part) => sum + part.amount, 0n)
+      if (!signedBy(tx, keys.treasury) || !moved(keys.treasuryAta, keys.facilityAta, keys.treasury, total)) return null
+      return { kind: 'repay', parts, signature }
+    }
+  }
+  return null
+}
+
+export function owed(draw: ArfDraw): bigint {
+  const total = draw.amount + draw.fee
+  return draw.repaid >= total ? 0n : total - draw.repaid
+}
+
+export function arfStatus(draw: ArfDraw, now: number): 'repaid' | 'overdue' | 'open' {
+  if (owed(draw) === 0n) return 'repaid'
+  return draw.dueAt < now ? 'overdue' : 'open'
+}
+
+export function arfLedger(entries: ArfEntry[], now: number): ArfLedger {
+  const draws = new Map<string, ArfDraw>()
+  for (const entry of entries) {
+    if (entry.kind !== 'draw') continue
+    const known = draws.get(entry.id)
+    if (known) {
+      known.amount += entry.amount
+      known.fee += entry.fee
+      known.drawnAt = Math.min(known.drawnAt, entry.drawnAt)
+      known.dueAt = Math.min(known.dueAt, entry.dueAt)
+      continue
+    }
+    draws.set(entry.id, { id: entry.id, ref: entry.ref, amount: entry.amount, fee: entry.fee, repaid: 0n, drawnAt: entry.drawnAt, dueAt: entry.dueAt, signature: entry.signature, repayments: [] })
+  }
+  let unmatched = 0n
+  for (const entry of entries) {
+    if (entry.kind !== 'repay') continue
+    for (const part of entry.parts) {
+      const draw = draws.get(part.id)
+      if (!draw) {
+        unmatched += part.amount
+        continue
+      }
+      draw.repaid += part.amount
+      if (!draw.repayments.includes(entry.signature)) draw.repayments.push(entry.signature)
+    }
+  }
+  const list = [...draws.values()].sort((a, b) => b.drawnAt - a.drawnAt || b.dueAt - a.dueAt)
+  const total = (pick: (draw: ArfDraw) => bigint) => list.reduce((sum, draw) => sum + pick(draw), 0n)
+  return {
+    draws: list,
+    outstanding: total(owed),
+    drawn: total((draw) => draw.amount),
+    fees: total((draw) => draw.fee),
+    repaid: total((draw) => draw.repaid),
+    overdue: list.filter((draw) => arfStatus(draw, now) === 'overdue').length,
+    unmatched,
+  }
+}
+
+export function arfDraw(ledger: ArfLedger, terms: ArfTerms, amount: bigint, liquidity: bigint, now: number): { fee: bigint; dueAt: number } | { refused: ArfRefusal } {
+  const fee = (amount * BigInt(terms.feeBps) + 9_999n) / 10_000n
+  if (ledger.overdue > 0) return { refused: 'overdue' }
+  if (ledger.outstanding + amount + fee > terms.limit) return { refused: 'limit' }
+  if (liquidity < amount) return { refused: 'liquidity' }
+  return { fee, dueAt: now + terms.termSeconds }
+}
+
+export function arfAllocate(ledger: ArfLedger, available: bigint): { id: string; amount: bigint }[] {
+  const parts: { id: string; amount: bigint }[] = []
+  let left = available
+  for (const draw of [...ledger.draws].sort((a, b) => a.dueAt - b.dueAt || a.drawnAt - b.drawnAt)) {
+    if (left <= 0n || parts.length >= ARF_MAX_REPAY_PARTS) break
+    const due = owed(draw)
+    if (due === 0n) continue
+    const amount = due < left ? due : left
+    parts.push({ id: draw.id, amount })
+    left -= amount
+  }
+  return parts
+}
+
+function requireArf(e: Env): { facility: Keypair; terms: ArfTerms } {
+  if (!e.arf) throw new RailError('the Arf sandbox facility is not configured', 503)
+  if (typeof e.arfTerms === 'string') throw new RailError(e.arfTerms, 500)
+  return { facility: e.arf, terms: e.arfTerms }
+}
+
+function arfKeys(e: Env, facility: Keypair, treasury: Keypair): ArfKeys {
+  const mint = new PublicKey(e.usdcMint)
+  return {
+    facility: facility.publicKey.toBase58(),
+    facilityAta: getAssociatedTokenAddressSync(mint, facility.publicKey).toBase58(),
+    treasury: treasury.publicKey.toBase58(),
+    treasuryAta: getAssociatedTokenAddressSync(mint, treasury.publicKey).toBase58(),
+    mint: e.usdcMint,
+  }
+}
+
+const arfTransactions = new Map<string, ParsedTransactionWithMeta>()
+
+async function arfEntries(e: Env, keys: ArfKeys): Promise<ArfEntry[]> {
+  const history = await e.connection.getSignaturesForAddress(new PublicKey(keys.facilityAta), { limit: ARF_HISTORY_LIMIT })
+  const signatures = history.filter((entry) => !entry.err).map((entry) => entry.signature)
+  const missing = signatures.filter((signature) => !arfTransactions.has(signature))
+  for (let index = 0; index < missing.length; index += ARF_FETCH_CHUNK) {
+    const chunk = missing.slice(index, index + ARF_FETCH_CHUNK)
+    const fetched = await e.connection.getParsedTransactions(chunk, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+    chunk.forEach((signature, position) => {
+      const tx = fetched[position]
+      if (tx) arfTransactions.set(signature, tx)
+    })
+  }
+  const current = new Set(signatures)
+  for (const signature of arfTransactions.keys()) if (!current.has(signature)) arfTransactions.delete(signature)
+  return signatures.flatMap((signature) => {
+    const tx = arfTransactions.get(signature)
+    const entry = tx ? readArfEntry(tx, signature, keys) : null
+    return entry ? [entry] : []
+  })
+}
+
+async function arfSweep(e: Env) {
+  const treasury = requireTreasury(e)
+  const { facility } = requireArf(e)
+  const keys = arfKeys(e, facility, treasury)
+  const mint = new PublicKey(e.usdcMint)
+  const treasuryAta = new PublicKey(keys.treasuryAta)
+  const facilityAta = new PublicKey(keys.facilityAta)
+  const [entries, available] = await Promise.all([arfEntries(e, keys), tokenUnits(e, treasuryAta)])
+  const parts = arfAllocate(arfLedger(entries, Math.floor(Date.now() / 1000)), available)
+  if (parts.length === 0) return { repaid: 0, draws: [] }
+  const total = parts.reduce((sum, part) => sum + part.amount, 0n)
+  const signature = await submit(e, treasury, [
+    createAssociatedTokenAccountIdempotentInstruction(treasury.publicKey, facilityAta, facility.publicKey, mint),
+    createTransferCheckedInstruction(treasuryAta, mint, facilityAta, treasury.publicKey, total, USDC_DECIMALS),
+    createMemoInstruction(repayMemo(parts), [treasury.publicKey]),
+  ])
+  return { repaid: toUsdc(total), signature, draws: parts.map((part) => ({ id: part.id, amount: toUsdc(part.amount) })) }
+}
+
+async function arfState(e: Env) {
+  if (!e.arf) return { enabled: false }
+  const treasury = requireTreasury(e)
+  const { facility, terms } = requireArf(e)
+  const keys = arfKeys(e, facility, treasury)
+  const now = Math.floor(Date.now() / 1000)
+  const [entries, liquidity] = await Promise.all([arfEntries(e, keys), tokenUnits(e, new PublicKey(keys.facilityAta))])
+  const ledger = arfLedger(entries, now)
+  return {
+    enabled: true,
+    sandbox: true,
+    facility: keys.facility,
+    limit: toUsdc(terms.limit),
+    termDays: terms.termSeconds / 86_400,
+    feeBps: terms.feeBps,
+    outstanding: toUsdc(ledger.outstanding),
+    available: toUsdc(ledger.outstanding >= terms.limit ? 0n : terms.limit - ledger.outstanding),
+    liquidity: toUsdc(liquidity),
+    drawn: toUsdc(ledger.drawn),
+    fees: toUsdc(ledger.fees),
+    repaid: toUsdc(ledger.repaid),
+    overdue: ledger.overdue,
+    count: ledger.draws.length,
+    draws: ledger.draws.slice(0, 10).map((draw) => ({
+      id: draw.id,
+      ref: draw.ref,
+      amount: toUsdc(draw.amount),
+      fee: toUsdc(draw.fee),
+      repaid: toUsdc(draw.repaid),
+      owed: toUsdc(owed(draw)),
+      drawnAt: draw.drawnAt,
+      dueAt: draw.dueAt,
+      status: arfStatus(draw, now),
+      signature: draw.signature,
+      repayments: draw.repayments,
+    })),
+    updatedAt: now,
+  }
+}
+
 async function settleDeposit(e: Env, body: Json) {
   const treasury = requireTreasury(e)
   const payload = verify(e, String(body.token), 'deposit')
@@ -326,25 +654,46 @@ async function settleDeposit(e: Env, body: Json) {
   const treasuryAta = getAssociatedTokenAddressSync(mint, treasury.publicKey)
   const recent = await e.connection.getSignaturesForAddress(treasuryAta, { limit: 100 })
   const previous = recent.find((entry) => entry.memo?.includes(String(payload.id)) && !entry.err)
-  if (previous) return { id: payload.id, status: 'completed', sandbox: true, amountOut: Number(payload.usdc) / 10 ** USDC_DECIMALS, signature: previous.signature, reused: true }
+  if (previous) return { id: payload.id, status: 'completed', sandbox: true, amountOut: Number(payload.usdc) / 10 ** USDC_DECIMALS, signature: previous.signature, reused: true, funding: fundingOf(previous.memo ?? '') }
   const amount = BigInt(String(payload.usdc))
-  await requireRepayment(e, new PublicKey(String(payload.account)), amount)
-  const balance = await e.connection.getTokenAccountBalance(treasuryAta).catch(() => null)
-  if (!balance || BigInt(balance.value.amount) < amount) throw new RailError('the sandbox treasury does not hold enough devnet USDC, cash out first or top it up', 409)
   const user = new PublicKey(String(payload.account))
+  await requireRepayment(e, user, amount)
   const userAta = getAssociatedTokenAddressSync(mint, user)
-  const tx = new Transaction().add(
+  const payUser = [
     createAssociatedTokenAccountIdempotentInstruction(treasury.publicKey, userAta, user, mint),
     createTransferCheckedInstruction(treasuryAta, mint, userAta, treasury.publicKey, amount, USDC_DECIMALS),
-    createMemoInstruction(String(payload.id), [treasury.publicKey]),
-  )
-  const latest = await e.connection.getLatestBlockhash('confirmed')
-  tx.recentBlockhash = latest.blockhash
-  tx.feePayer = treasury.publicKey
-  tx.sign(treasury)
-  const signature = await e.connection.sendRawTransaction(tx.serialize(), { maxRetries: 5 })
-  await confirmSignature(e.connection, signature, latest.lastValidBlockHeight)
-  return { id: payload.id, status: 'completed', sandbox: true, amountOut: Number(amount) / 10 ** USDC_DECIMALS, signature }
+  ]
+  let refused: ArfRefusal | null = null
+  if (e.arf) {
+    const { facility, terms } = requireArf(e)
+    const keys = arfKeys(e, facility, treasury)
+    const facilityAta = new PublicKey(keys.facilityAta)
+    const now = Math.floor(Date.now() / 1000)
+    const [entries, liquidity] = await Promise.all([arfEntries(e, keys), tokenUnits(e, facilityAta)])
+    const draw = arfDraw(arfLedger(entries, now), terms, amount, liquidity, now)
+    if ('refused' in draw) {
+      refused = draw.refused
+    } else {
+      const id = arfDrawId(String(payload.id))
+      const signature = await submit(
+        e,
+        treasury,
+        [
+          createAssociatedTokenAccountIdempotentInstruction(treasury.publicKey, treasuryAta, treasury.publicKey, mint),
+          createTransferCheckedInstruction(facilityAta, mint, treasuryAta, facility.publicKey, amount, USDC_DECIMALS),
+          ...payUser,
+          createMemoInstruction(drawMemo({ id, amount, fee: draw.fee, dueAt: draw.dueAt, ref: String(payload.id) }), [treasury.publicKey, facility.publicKey]),
+        ],
+        [facility],
+      )
+      return { id: payload.id, status: 'completed', sandbox: true, amountOut: toUsdc(amount), signature, funding: { source: 'arf', drawId: id, fee: toUsdc(draw.fee), dueAt: draw.dueAt } }
+    }
+  }
+  if ((await tokenUnits(e, treasuryAta)) < amount) {
+    throw new RailError(refused ? `the Arf facility cannot fund this deposit (${ARF_REFUSALS[refused]}) and the sandbox treasury does not hold enough devnet USDC` : 'the sandbox treasury does not hold enough devnet USDC, cash out first or top it up', 409)
+  }
+  const signature = await submit(e, treasury, [...payUser, createMemoInstruction(String(payload.id), [treasury.publicKey])])
+  return { id: payload.id, status: 'completed', sandbox: true, amountOut: toUsdc(amount), signature, funding: refused ? { source: 'treasury', reason: refused } : { source: 'treasury' } }
 }
 
 async function treasuryState(e: Env) {
@@ -372,8 +721,10 @@ export async function handleRail(request: Request): Promise<Response> {
         return json({ ...quote(fx.tryPerUsd, url.searchParams.get('side') ?? 'cashout', Number(url.searchParams.get('amount'))), source: fx.source })
       }
       if (action === 'treasury') return json(await treasuryState(e))
+      if (action === 'arf') return json(await arfState(e))
     }
     if (request.method === 'POST') {
+      if (action === 'arf-sweep') return json(await arfSweep(e))
       const body = (await request.json()) as Json
       if (action === 'payout') return json(await startPayout(e, body))
       if (action === 'confirm') return json(await confirmPayout(e, body))
