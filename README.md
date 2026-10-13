@@ -2,9 +2,9 @@
 
 # Paralyx
 
-**Turkish lira liquidity without selling your SOL.** Post SOL as collateral to a Kamino Lend market, borrow USDC, cash the USDC out as lira through a fiat rail, repay in lira. Paralyx is non-custodial software: the Kamino obligation belongs to the user's wallet, the Kamino market is the lender, a regulated rail is the fiat party, and the Paralyx program never holds funds. **Arf liquidity sits behind the rail:** a lira repayment reaches the Kamino debt in seconds from a short-term Arf draw instead of a prefunded USDC float, and the rail repays the draw from the USDC that cash-outs bring in ([Arf liquidity behind the rail](#arf-liquidity-behind-the-rail)).
+**Turkish lira liquidity without selling your SOL.** Post SOL as collateral to a Kamino Lend market, borrow USDC, cash the USDC out as lira through a fiat rail, repay in lira. Paralyx is non-custodial software: the Kamino obligation belongs to the user's wallet, the Kamino market is the lender, a regulated rail is the fiat party, and the Paralyx program never holds funds. **Arf liquidity sits behind the rail:** Arf's USDC waits in the vault of `arf_line`, a second Anchor program; a lira repayment reaches the Kamino debt in seconds from a draw the rail makes within Arf's limit, term and fee, instead of from a prefunded float, and the rail repays the draw, oldest first, from the USDC that cash-outs bring in ([Arf liquidity behind the rail](#arf-liquidity-behind-the-rail)).
 
-Live app (upstream, without the Arf line): [paralyx.wienerlabs.xyz](https://paralyx.wienerlabs.xyz) · Program (devnet): [`PLXama5S…yG6qr`](https://explorer.solana.com/address/PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr?cluster=devnet) · Source: this repository, `main`, which continues [wienerlabs/paralyx-solana](https://github.com/wienerlabs/paralyx-solana) branch `solana-port`
+Live app (upstream, without the Arf line): [paralyx.wienerlabs.xyz](https://paralyx.wienerlabs.xyz) · Programs (devnet): `credit_line` [`PLXama5S…yG6qr`](https://explorer.solana.com/address/PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr?cluster=devnet), `arf_line` [`ARF4tQPA…dvAoC`](https://explorer.solana.com/address/ARF4tQPAqQdGScZK7kF2yWK4tpkp99mPpEkr2rtdvAoC?cluster=devnet) · Source: this repository, `main`, which continues [wienerlabs/paralyx-solana](https://github.com/wienerlabs/paralyx-solana) branch `solana-port`
 
 > One switch in the top bar, two networks. **Devnet** is the working deployment: the Paralyx program composes Kamino's real klend program on devnet against a SOL and USDC market priced by live Pyth feeds, and the lira leg is a sandbox rail that is labeled as such on every screen. **Mainnet** is read only: the app shows Kamino's Main Market live, the Paralyx program is not deployed there yet, and the production lira rail (BiLira) is a stub with its remaining work listed in the app.
 
@@ -16,7 +16,7 @@ Live app (upstream, without the Arf line): [paralyx.wienerlabs.xyz](https://para
 4. [Architecture](#architecture)
 5. [Integrations and why they are load-bearing](#integrations-and-why-they-are-load-bearing)
 6. [Deployed artifacts](#deployed-artifacts)
-7. [The program](#the-program)
+7. [The programs](#the-programs)
 8. [Tests](#tests)
 9. [The app](#the-app)
 10. [The fiat rail](#the-fiat-rail)
@@ -33,7 +33,7 @@ Live app (upstream, without the Arf line): [paralyx.wienerlabs.xyz](https://para
 
 Paralyx, kripto varlığını satmak istemeyen ama liraya ihtiyacı olan kullanıcı için teminatlı likidite hattı. SOL teminat olarak Kamino Lend piyasasına konur, USDC borç alınır, USDC lira rayı üzerinden IBAN'a lira olarak ödenir. Geri ödeme yine lirayla yapılır: raya lira yatırılır, gelen USDC borcu kapatır, teminat serbest kalır. Paralyx hiçbir noktada fon tutmaz; Kamino obligation'ı kullanıcının cüzdanına aittir, kredi karşı tarafı Kamino piyasası, lira bacağı düzenlenmiş taraftır. Devnet'te tam döngü Kamino'nun gerçek klend programı ve canlı Pyth fiyatlarıyla çalışır; lira bacağı her ekranda sandbox olarak etiketlenmiş bir simülasyondur. Mainnet'te uygulama Kamino Main Market'i salt okunur gösterir; üretim lira rayı için BiLira taslağı ve kalan işler uygulamada listelidir.
 
-Lirayla geri ödemede ray, USDC'yi önceden fonlanmış bir hazineden değil Arf likidite hattından çeker. Arf, sınır ötesi ödeme şirketlerine 1 ila 5 gün vadeli, alacağa dayalı USDC likiditesi veren, İsviçre'de düzenlenmiş bir platform. Her çekiliş ve geri ödeme, tarafların imzaladığı bir memo ile zincirde kayıtlıdır; operatör, nakit çekimlerden gelen USDC ile çekilişleri vadesinde kapatır. Defter veritabanında değil, hattın token hesabının zincir geçmişindedir. Devnet'te hat, rayın tuttuğu bir test cüzdanıdır, Arf'ın gerçek fonu değildir. Arf'ın herkese açık bir API'si yok ve yalnızca lisanslı kurumlara likidite veriyor; bu yüzden üretimde hat Paralyx'in değil, lisanslı ray operatörünün olur.
+Lirayla geri ödemede ray, USDC'yi önceden fonlanmış bir hazineden değil Arf likidite hattından çeker. Arf, sınır ötesi ödeme şirketlerine 1 ila 5 gün vadeli, alacağa dayalı USDC likiditesi veren, İsviçre'de düzenlenmiş bir platform. Hat, ikinci bir Anchor programıdır (`arf_line`): Arf'ın sermayesi programın kasasında durur, ray operatörü Arf'ın limiti, vadesi ve ücreti içinde Arf'ın imzası olmadan çeker. Her çekiliş, mevduat referansıyla açılan bir hesaptır, bu yüzden aynı mevduat iki kez çekilemez; geri ödemeler en eski çekilişten başlar ve vadesi geçmiş çekiliş varken program yeni çekilişi reddeder. Operatör çekilişleri nakit çekimlerden gelen USDC ile kapatır. Devnet'te sermaye devnet USDC'dir, Arf'ın gerçek fonu değildir. Arf'ın herkese açık bir API'si yok ve yalnızca lisanslı kurumlara likidite veriyor; bu yüzden üretimde hattın operatörü Paralyx değil, lisanslı ray operatörü olur.
 
 ## What the user does
 
@@ -67,22 +67,26 @@ Every `open_line`, `repay_line` and `record_payout` emits an event through Ancho
 
 ### The Arf line on devnet
 
-On 13 October 2026 the Arf line ran on devnet against the deployed program, with the rail served locally by the Vite dev server from test keys: treasury `79BqoW6S…jekm2D`, Arf sandbox line `CAxiHh3N…oaNU5W` (USDC account `Bv241Now…wfC2`), user `HjZ79Xwi…dByG2`. The last two rows ran in the browser with the burner wallet `BTKwktVB…GvTLT`.
+The `arf_line` program was deployed on 14 October 2026 and the line [`7zLBPHXS…WSTer`](https://explorer.solana.com/address/7zLBPHXSMZ8xY2ep9CBX65zWVh1UERZK3J1yHvWwSTer?cluster=devnet) ran against it, with the rail served locally by the Vite dev server from test keys: Arf, the provider, `CAxiHh3N…oaNU5W`; the rail treasury, the operator, `79BqoW6S…jekm2D`; the user `HjZ79Xwi…dByG2`. The app rows ran in the browser with the burner wallet `BTCHsmL8…VMSFg`. The rail held only the treasury key: after funding the line, Arf signed nothing but the two term changes.
 
-| Step | Transaction |
+| Step | Transactions |
 |---|---|
-| `open_line`: 1 SOL in, 15 USDC out | [`5Yqf9MyW…`](https://explorer.solana.com/tx/5Yqf9MyWWFVApQsjcZx3xE8dACHgTFD5m9jXYKxmbevzmudN5Vdcs1MTYSWEJjgyVZbQtrGwA4hbsg49bhiGtqWp?cluster=devnet) |
-| 6 devnet USDC into the Arf line, standing in for Arf's capital; the ledger ignores it | [`62fWz46w…`](https://explorer.solana.com/tx/62fWz46wUaimdHHjej6XbB1o1icz9qudXJkzQjcLf6Mx1meeGPubsFENTBhTdMCj8VLL586aqqE5WKuT33dfFjRV?cluster=devnet) |
-| Cash out 2 USDC; no draw is open, so nothing goes back to Arf | [`3ZxWEQiE…`](https://explorer.solana.com/tx/3ZxWEQiEa3N2Jh3ik7mrTFfCovnaejtV4tNPWPXDqXqYyQDXCUQQPvD1CPGWpUh2J5fv2PjMrSpxdKGCMrjxAn6w?cluster=devnet) |
-| ₺100 deposit settled by draw `ARF-DR-F3236FBEB7`: 2.015491 USDC from the line to the treasury to the user, fee 2,016 units, due in 3 days, memo signed by both (the `repay_line` after it hit the bug below) | [`4Nt6ohmN…`](https://explorer.solana.com/tx/4Nt6ohmNre8nbqWdhLus61hMvQ5SATJoeK7PGLQpdfbos2xLtt8ZceZFhre9JsPZNPhGU2jbU7KQbASzLtqXcca8?cluster=devnet) |
-| ₺100 deposit settled by draw `ARF-DR-8A5FC084AE`, then `repay_line` of 2.013475 USDC | [`5a2P6abB…`](https://explorer.solana.com/tx/5a2P6abBWXE8RbXHQYKKFUmpAueyhkvZxQbhs9GGrxE98TFg5M7SDWBgM7AR94ma71adfzfSwnH2yd9cNQhCRkQM?cluster=devnet), [`RhJkuqRe…`](https://explorer.solana.com/tx/RhJkuqReG9BJJr5v2w2YUd6QUfzfSakS563RSwqEKFDyjPT1YGbstDjs8b3otfVyeC7Qc4XJtcex2RgBrs6AG8X?cluster=devnet) |
-| Cash out 3 USDC; confirming it repays both draws, 4.035014 USDC with fees, in one `ARF-REPAY` transaction | [`3zGZ7c7c…`](https://explorer.solana.com/tx/3zGZ7c7cg44HW1KmSGygvCwX4giKCLh9EeXLCPF62V9LvA1dUe6FwVDWxyBx1z5sF8E7efuQg2iVd2Hsp5BoC1HL?cluster=devnet), [`5toq2C1t…`](https://explorer.solana.com/tx/5toq2C1ttyN5nxubfireVbkiSAejymyj47tYAds8Wucy4QvFeWVTLC4SbV3gyKpzocupcTt4JEkktw5bhn2jm8Rv?cluster=devnet) |
-| With `ARF_LIMIT_USDC=1` a ₺50 deposit is refused by the line and paid from the treasury float, `reason: limit` | [`5yXv7f8o…`](https://explorer.solana.com/tx/5yXv7f8oEJrG5Vk1GAVXn7dxVo1MkbxTposXf9TvxbTzK37pNkw8HqxcohFa3P7v2aF5PJgSGDVNPe5JBJPard2B?cluster=devnet) |
-| ₺50 deposit settled twice with the same instruction: one draw, `ARF-DR-1B40FA5380`; the second call returns the first transfer with `reused: true` | [`2fPMDjwY…`](https://explorer.solana.com/tx/2fPMDjwYKg1SqQe17e31K6iwqN8egQCkMEEP2EejPnsxRrQsNyMpSrK7LFeUExtXxSnZN1gvtG6qQngGQ4CkwUzN?cluster=devnet) |
-| App: cash out 1 USDC; the receipt shows 1.01 USDC repaid to Arf | [`4hrgo5Kv…`](https://explorer.solana.com/tx/4hrgo5Kv5MgzN67qEeEgZJyt1gCqbFiT6oDhhG4fwNdjtqVb2yfnJjWxttjhJweaj3mhie9Lrh6A2VpenzW92DNG?cluster=devnet), [`24MPzowr…`](https://explorer.solana.com/tx/24MPzowrGwFpmUH6VMarKjuDoA8xU7rXxg3s6UGwksSd77uytYV3g582YKrj3zZnehswRqjCqu8HoBACSJbizbfj?cluster=devnet) |
-| App: repay ₺50, funded by draw `ARF-DR-ED00437B20`; the whole debt is repaid and 0.05 SOL comes back | [`3pQj9B8h…`](https://explorer.solana.com/tx/3pQj9B8hEYJiJgXDjuB15M1BjQQk4gLxDsJu1UDs82zn73aXBee5eGGkisCxiqFHMpXPWkiWygnrAM5sfFGGzuqb?cluster=devnet), [`31sMUmg6…`](https://explorer.solana.com/tx/31sMUmg6YVV3259cMfYdBxzV3Qtc1ZMbzcCJh7ZhghpoBihaMmzPfzZMLWFwVrR8M3Ccv1kxVXpXqFYRBXc8tQJe?cluster=devnet) |
+| Deploy `arf_line`: 294,304 bytes, sha256 `97163f4792cdff7c5274b95f3e9bfaedc115724df1d3fcd78f445d25bc775508`; `solana program dump` returns the same bytes | [`aujiJ6k6…`](https://explorer.solana.com/tx/aujiJ6k6EdQ17HmX2PswHhpkxt8Db7b2aYcW6K7ZRTYKVADu7RqWRM8fc1BFaWwfwN3qpYQK5DXdfE7vUkm9Cnp?cluster=devnet) |
+| `create_line`: Arf as provider, the rail treasury as operator, devnet USDC, limit 500 USDC, 3 days, 10 bps | [`5aDYnbxr…`](https://explorer.solana.com/tx/5aDYnbxrjwvSvDLD5UBKMjxfgVH7bvjwyGGxTsCqU5Hqsz8JWApULAv7bjyeQhv1vTDE66Re7xPjdDc5UMqkwfEY?cluster=devnet) |
+| `fund`: Arf puts 4.99 USDC into the vault | [`xoGptccX…`](https://explorer.solana.com/tx/xoGptccXjXbjqA5rQWPf26cwdeQVnciVznzeKWvpYxe5CqRLJmws3T6jdTi9MZ8GB9DGmwTCTPhEGhf83B8NEw1?cluster=devnet) |
+| ₺100 deposit: `draw` #0, 2.015127 USDC from the vault straight to the user, fee 2,016 units, due in 3 days, signed by the rail alone; then `repay_line` | [`k2VeJ1kT…`](https://explorer.solana.com/tx/k2VeJ1kTcRv8Kzyh2YuD45UJqYUyKDxzqMLZNW7zGLSG92hc3QsFNrrMHdhyM4owLBE3LPiyerf56M3LEgTsAAg?cluster=devnet), [`3uLkW7qL…`](https://explorer.solana.com/tx/3uLkW7qL4j15DNwGjyYs4fHtNYKRkCh7cE4hpyUW2PDCgFEZhDFPqR86rZnMCmyZA11U4rGDSKLzB8mwNaxWTNh8?cluster=devnet) |
+| ₺100 deposit: `draw` #1 | [`3t1pGSyF…`](https://explorer.solana.com/tx/3t1pGSyFbrPtKvxaooNLrjmoDPmY2AgBosbkWm8CS5325vB1Qdk4dE6yynEiSnyeqL5Lik7e7wKNzwP81HNoYfXL?cluster=devnet) |
+| Cash out 3 USDC; confirming it calls `repay` for #0 and #1, 4.034286 USDC with fees, oldest first | [`2d1RYd4o…`](https://explorer.solana.com/tx/2d1RYd4oeLuKjMSipQmuovB5KWRPRgvUpAi3yRZmdSFsDF6CdbvNHX5cHRhudZr2x1qtSPmZG77Ks47bKjAcuAZP?cluster=devnet) |
+| One ₺50 deposit settled twice at the same moment: `draw` #2 lands, the second draw fails on chain with "account already in use", and both calls return #2 | [`62VRqKsi…`](https://explorer.solana.com/tx/62VRqKsi6PXzStV5G8RL42TjCWe5KiCF2MoBKguwnxp7URXJMkBQ1DuHZGagzCjz8p1UhMgf7kLGbLEFK6Lu2z7Z?cluster=devnet), [`2et3r1Zg…`](https://explorer.solana.com/tx/2et3r1ZgVRZCRwJCvfUmW1UAs1jZLCYF68peSNAVCH5bSDfMGBigbMRf7wQX5qod7VS4UrWXWVzVFQxqakKCx3ux?cluster=devnet) |
+| `set_terms` lowers the limit to 1 USDC; a ₺50 deposit is refused with `limit` and paid from the treasury float | [`3SwoEjsx…`](https://explorer.solana.com/tx/3SwoEjsx1AbqkCH5u4TFFdsWK3odeTcVoEgF6NfAQtPL545tVUdGrzrz8NVUvCnfEnq8gcJFH3apxuRXMzwpYzAv?cluster=devnet), [`2CSG4Qbm…`](https://explorer.solana.com/tx/2CSG4Qbm1aeEgniG9NSbvBvbUmmKU3LXWcM52zf48wcxgK8gdB17zJrRQiB9aYyR5G541DxGuLKNTsXXpkXLhRUS?cluster=devnet) |
+| Cash out 2 USDC repays #2 | [`52rDKNnR…`](https://explorer.solana.com/tx/52rDKNnRV44pmvNNJWWXDXzU8fL2FwjD3d2bssMjgspmNDUs3VeGHhaZQ5HsVuiQReP4DPSpPqG9zfMvVMQXH3zL?cluster=devnet) |
+| `set_terms` freezes the line and a deposit is refused with `frozen`; then the terms are restored | [`3htgaAmj…`](https://explorer.solana.com/tx/3htgaAmj8UYnbc7QzjSakLDV23JyyWPjzsyBQLQS4YFXgiSYzMKNdf49s8Er4h6NzYdDVcPcHDVoLuE4govR5kpQ?cluster=devnet), [`2Se6UMB3…`](https://explorer.solana.com/tx/2Se6UMB31a7MfBkx9MLWHZ3vFsyDAa6B2m1Cebqpv47P17EKAELwa6LPicfCbycxA7k6MZuBd1tZ8ybcH1zxiCzK?cluster=devnet) |
+| App: repay ₺50, funded by `draw` #3; the whole debt is repaid and 0.05 SOL comes back | [`3BEW9i1m…`](https://explorer.solana.com/tx/3BEW9i1mihmPwzz3p4Cc6ToeyKZunTbWxs8Pkok3Hha7AvgwBtcCCSVKRpYjiMryWsbJtB8B4egN34WUyrnsXNJF?cluster=devnet), [`dc3v25rr…`](https://explorer.solana.com/tx/dc3v25rrrXgEU3uzuTphFXYhmWRuJwvZKbPmm9LMsQxeY5w8JxkkW5woZEA3yAPEvVMiP5ezVLJJBpjD4fw2and?cluster=devnet) |
+| Cash out 1 USDC repays #3 | [`5x1wSRhV…`](https://explorer.solana.com/tx/5x1wSRhVKKFTipA6Hzq6wtZ1JtPWu34poMAwTgxQREQUzdRTzbTXTgMQM7VRAF8nT5tYWCfjmmTm5zSRx9Mc9m77?cluster=devnet) |
 
-The same run found that a partial repayment and a borrow without new collateral failed with `AccountNotInitialized`: `repay_line` and `open_line` need the wrapped SOL account that `open_line` closes after a deposit. Both builders now create it every time ([`3sqRzMYW…`](https://explorer.solana.com/tx/3sqRzMYWTCHt68U5KGotWqKw2C9iXduCZSEonuoVyZNaE8SXqcjguxTSokYcwHaaGaug2TxjD27Wa3NPtSW2FfW6?cluster=devnet) and [`VBbu9yCf…`](https://explorer.solana.com/tx/VBbu9yCfnGjfqFAhDPXv7DxvZet1miPD7nL9QJ5A3MGxstKNnaZkQTtbfm8LyL2KtHChgcbhd1ni3nCHrAU8UM5?cluster=devnet) after the fix). After the run the line holds 4.997295 USDC and one open draw of 1.008753: together 6.006048, the 6 USDC of capital plus 6,048 units of fees.
+With the limit at 1 USDC and too little in the float, settle answered 409 and named both reasons; no transaction was sent. After the run the line has made four draws and all are repaid; the vault holds 4.996048 USDC, the 4.99 Arf put in plus 6,048 units of fees.
+
+A first version on 13 October kept the ledger in signed memos on a keypair the rail held (the README at commit `801c958` lists that run). It found that a partial repayment and a borrow without new collateral failed with `AccountNotInitialized`: `repay_line` and `open_line` need the wrapped SOL account that `open_line` closes after a deposit. Both builders now create it every time ([`3sqRzMYW…`](https://explorer.solana.com/tx/3sqRzMYWTCHt68U5KGotWqKw2C9iXduCZSEonuoVyZNaE8SXqcjguxTSokYcwHaaGaug2TxjD27Wa3NPtSW2FfW6?cluster=devnet) and [`VBbu9yCf…`](https://explorer.solana.com/tx/VBbu9yCfnGjfqFAhDPXv7DxvZet1miPD7nL9QJ5A3MGxstKNnaZkQTtbfm8LyL2KtHChgcbhd1ni3nCHrAU8UM5?cluster=devnet) after the fix).
 
 ## Architecture
 
@@ -102,7 +106,7 @@ flowchart LR
     PY[Pyth price feeds]
     TOK[SPL Token<br/>WSOL and USDC]
     TR[(Sandbox treasury<br/>devnet USDC)]
-    ARF[(Arf sandbox line<br/>devnet USDC)]
+    ARF[arf_line<br/>Anchor program: line, vault, draws]
   end
   subgraph Lira[Lira leg]
     BANK[(Bank<br/>IBAN, simulated on devnet)]
@@ -118,8 +122,8 @@ flowchart LR
   UI -- SOL/USD on chain --> PY
   UI -- quote, payout, deposit --> RAIL
   RAIL -- verify payment, send USDC --> TR
-  RAIL -- draw on deposit, repay on cash-out, read ledger --> ARF
-  ARF -- draw --> TR
+  RAIL -- draw on deposit, repay on cash-out, read line --> ARF
+  ARF -- vault USDC to the user --> TOK
   RAIL -- USD/TRY --> PY
   RAIL -. simulated .-> BANK
   BL -. future .-> BANK
@@ -133,7 +137,7 @@ sequenceDiagram
   participant P as credit_line
   participant K as Kamino klend
   participant R as Sandbox rail
-  participant F as Arf line
+  participant F as arf_line
   U->>A: Open line (1 SOL, borrow 10 USDC)
   A->>P: wrap SOL, init obligation if new, open_line(1 SOL, 10 USDC)
   P->>K: refresh_reserve x2, refresh_obligation
@@ -145,12 +149,12 @@ sequenceDiagram
   A->>R: quote, payout instruction
   U->>R: 4 USDC to treasury with memo
   R-->>A: verified on chain, SBX bank reference
-  R->>F: repay open draws from the USDC that came in
+  R->>F: repay open draws, oldest first, from the USDC that came in
   A->>P: record_payout(rail id, lira)
   U->>A: Repay in lira
   A->>R: deposit instruction, simulated bank transfer
-  F->>R: draw, signed by the line and the treasury
-  R-->>U: USDC from the draw
+  R->>F: draw(deposit id), signed by the rail only
+  F-->>U: USDC from Arf's vault
   A->>P: repay_line(all, all)
   P->>K: refresh, repay_v2, refresh, withdraw_v2
   K-->>U: SOL collateral back
@@ -164,7 +168,7 @@ sequenceDiagram
 | **Pyth** | SOL/USD and USDC/USD for Kamino's reserves and for the app (on-chain push feed `7UVimf…`); Hermes for history | No prices, Kamino refuses to refresh |
 | **Solana wallet adapter** | Phantom, Solflare and Backpack through Wallet Standard, plus the adapters' install links | Manual wallet plumbing |
 | **FiatRail** (sandbox on devnet, BiLira stub on mainnet) | Lira out and lira in behind one interface | No lira. The product would be a Kamino front end |
-| **Arf liquidity** (sandbox line on devnet, steps listed on mainnet) | Short-term USDC behind the rail: a lira repayment settles from a draw, cash-outs repay it | The rail operator has to prefund a USDC float, and a repayment waits whenever the float is short |
+| **Arf liquidity** (`arf_line` on devnet, steps listed on mainnet) | Short-term USDC behind the rail: Arf's capital in a program vault, drawn by the rail within the terms the program enforces, repaid by cash-outs | The rail operator has to prefund a USDC float, and a repayment waits whenever the float is short |
 | **klend-sdk** | Health factor, LTV, liquidation LTV and APYs from the user's obligation and the market's reserves | The app would reimplement Kamino's math |
 
 ## Deployed artifacts
@@ -179,7 +183,11 @@ sequenceDiagram
 | Event authority PDA | devnet | `F1pRTfwrXi5jULzbJ2T2PV4oYAyWfbqXr7qVurE13q8z` |
 | Address lookup table | devnet | [`65qPaimB5uhZ1TADzMY2wwvgqnZbBoNdFQsYcBTFEzLK`](https://explorer.solana.com/address/65qPaimB5uhZ1TADzMY2wwvgqnZbBoNdFQsYcBTFEzLK?cluster=devnet), 28 addresses |
 | Sandbox rail treasury | devnet | `G1gP9iSfZ5xFjikdGfBc1rb5vs6ypvMP8xuwTdBCgg2c` |
-| Arf sandbox line and treasury of the Arf proof run | devnet | `CAxiHh3NzNCJ4jgEacu9Vz4Vq9aUPNWKfLeo3goaNU5W`, `79BqoW6SLbsfTr4cudg3oKcZ8oXr5bTkNBzmg9jekm2D` |
+| Arf line program `arf_line` | devnet | [`ARF4tQPAqQdGScZK7kF2yWK4tpkp99mPpEkr2rtdvAoC`](https://explorer.solana.com/address/ARF4tQPAqQdGScZK7kF2yWK4tpkp99mPpEkr2rtdvAoC?cluster=devnet) |
+| `arf_line` program data, upgrade authority | devnet | `Ap1rFm6Farg55JygJC5dHmhoMSP5NLtnN8XFoREn8fKA`, `33qU3JFkrehB2HkgdHzcpj9gDkFk8c2okQC51REWhjKh` |
+| `arf_line` deploy transaction | devnet | [`aujiJ6k6…`](https://explorer.solana.com/tx/aujiJ6k6EdQ17HmX2PswHhpkxt8Db7b2aYcW6K7ZRTYKVADu7RqWRM8fc1BFaWwfwN3qpYQK5DXdfE7vUkm9Cnp?cluster=devnet), slot 510,779,788 |
+| Arf line of the proof run, its vault | devnet | [`7zLBPHXSMZ8xY2ep9CBX65zWVh1UERZK3J1yHvWwSTer`](https://explorer.solana.com/address/7zLBPHXSMZ8xY2ep9CBX65zWVh1UERZK3J1yHvWwSTer?cluster=devnet), `EADYCf8LHYdBpLormsM4LbbLDCszJoZLMod5ai6GarFx` |
+| Its provider (Arf) and operator (rail treasury) | devnet | `CAxiHh3NzNCJ4jgEacu9Vz4Vq9aUPNWKfLeo3goaNU5W`, `79BqoW6SLbsfTr4cudg3oKcZ8oXr5bTkNBzmg9jekm2D` |
 | Kamino klend program | devnet and mainnet | `KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD` |
 | Kamino lending market | devnet | `4GiGCkrwHphwrsG8imKSHhjTtmbjorqYrYwMsRtBu77Z` |
 | SOL reserve, USDC reserve | devnet | `4yh877FXQrfGWLvvEV2QXNUQh4gBN4Q7gcM7Fz4uAnUs`, `DJ8gPwXaEX2T8ZJGwZNJc9vL6iwrUUyUrwzeSgjD8RHH` |
@@ -189,7 +197,9 @@ sequenceDiagram
 
 The deployed binary is 380,992 bytes, sha256 `40db4ee6663f78ad7a9b42c60474a2a7a4bc0789c54aed190be888ba7bfd7be3`, built with Anchor 1.2 and platform tools v1.57 from the program source at commit `1561b2d`. `solana program dump PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr credit_line.so -u devnet` returns the same bytes. The build is not reproducible bit for bit on another machine; a verifiable build (`solana-verify`, Docker) is on the mainnet checklist.
 
-## The program
+## The programs
+
+### credit_line
 
 `contracts/credit_line` is an Anchor 1.2 program. It is a thin composition layer over Kamino: all value moves between the user's token accounts and the Kamino reserves inside Kamino's own instructions; Paralyx validates the accounts, sequences the CPIs, records the line and emits events.
 
@@ -219,9 +229,37 @@ Limits and trust, stated plainly:
 - **Payout counters are self-attested.** `record_payout` is signed by the user. The sandbox rail checks the transfer before it issues an `SBX-` reference, but the program does not verify the reference; `payouts` and `payout_try` say what the user's rail reported. A production rail would co-sign records with its own key.
 - **Compute and size.** In the tests `open_line` consumes about 267,000 compute units and `repay_line` about 247,000. A legacy message with only `open_line` is 1,004 bytes; with the client's wrapping, ATA and setup instructions it would pass Solana's 1,232-byte limit, so the app requests 1,000,000 units and sends version 0 transactions through an address lookup table.
 
+### arf_line
+
+`contracts/arf_line` is a second Anchor 1.2 program. It is separate from `credit_line` because the line is an agreement between Arf and the rail operator, not part of a user's credit line: it escrows the lender's capital and keeps the ledger of what the operator owes.
+
+| Instruction | Signer | What it does |
+|---|---|---|
+| `create_line(limit, term_seconds, fee_bps)` | provider (Arf) | Creates the `Line` PDA (seeds `line`, provider, operator, mint) and its vault, a token account the line owns (seeds `vault`, line). The term must be one to five days, the fee at most 500 bps, the limit above zero |
+| `fund(amount)` | provider | Moves the provider's tokens into the vault |
+| `withdraw(amount)` | provider | Moves tokens out of the vault, at most what it holds; what is lent out is not in the vault |
+| `set_terms(limit, term_seconds, fee_bps, frozen)` | provider | Changes the terms for new draws, or freezes the line. The term changes only while no draw is open |
+| `draw(reference, amount)` | operator (the rail) | Creates the `Draw` PDA (seeds `draw`, line, reference) and pays the amount from the vault to any token account of the mint. Refused while the line is frozen, while the oldest open draw is past due, when the outstanding amount with this draw and its fee would pass the limit, or beyond the vault. The fee is rounded up, the due date is now plus the term |
+| `repay(amount)` | anyone | Takes the open draws from the oldest as remaining accounts, pays each what it owes until the amount runs out, and moves only what was applied from the payer's account to the vault. When draws stay open the next open draw has to be passed too, so the line always knows the oldest due date |
+
+Accounts: `Line` holds the provider, operator, mint and vault, the terms, `frozen`, the running `outstanding` (principal and fees not yet repaid), the cumulative `drawn`, `fees` and `repaid`, `next_seq`, and `head_seq` and `head_due_at` for the oldest open draw. `Draw` holds the line, `seq`, the destination account, `amount`, `fee`, `repaid`, `drawn_at`, `due_at` and the reference, last, so every other field sits at a fixed offset. Both carry a version byte and reserved bytes. Events: `LineCreated`, `LineFunded`, `LineWithdrawn`, `TermsSet`, `Drawn` and one `Repaid` per draw a repayment touches, through `emit_cpi`. Errors start at 7100: `EmptyAmount`, `InvalidReference`, `InvalidLimit`, `InvalidTerm`, `InvalidFee`, `Frozen`, `Overdue`, `LimitExceeded`, `InsufficientLiquidity`, `NothingToRepay`, `DrawOutOfOrder`, `MissingHead`, `NotADraw`, `WrongLine`, `OpenDraws`, `NotProvider`, `NotOperator`, `AmountOverflow`.
+
+Patterns worth pointing at:
+
+- **No signature from Arf per draw.** A credit line is a commitment: Arf sets the limit, term and fee once and the program enforces them, so the rail can settle at three in the morning without waking a signer. Arf keeps two levers, freezing the line and withdrawing what is not lent out.
+- **Exactly once, on chain.** The draw account is seeded by the reference, the deposit id, so a second draw for one deposit fails when the account is created, whatever the server does. In the devnet run two settles of one deposit raced: one draw landed, the other transaction failed with "account already in use".
+- **First in, first out with a cursor.** Each draw takes the next sequence number and the term cannot change while draws are open, so due dates rise with the sequence. Repayments start at the head, so the line needs only `head_seq` and `head_due_at` to refuse a new draw while the oldest is overdue, without walking every draw.
+- **Anyone can repay.** Paying a debt early harms nobody, and the program moves only what is owed.
+
+Limits, stated plainly:
+
+- **The vault is custody.** Unlike `credit_line`, this program holds funds: the lender's capital. Whoever holds its upgrade authority, on devnet the deployer `33qU3JFk…QC51REWhjKh`, could ship code that moves them. Before mainnet: an audit, the authority under a multisig of Arf and the operator or a timelock, and a verifiable build.
+- **Transfer-fee mints.** Amounts are recorded as sent. A Token-2022 mint with a transfer fee would leave the vault with less than the ledger says; USDC has no such fee, and the program does not refuse such mints.
+- **One mint and one operator per line.** A second corridor or a second operator is a second line.
+
 ## Tests
 
-`anchor test` builds the program and runs fourteen LiteSVM tests (`contracts/credit_line/tests/credit_line.rs`) against the real klend and farms programs and a single-slot snapshot of Kamino's mainnet Main Market: the lending market, the SOL and USDC reserves with their vaults and mints, Scope prices and the SOL collateral farm. `contracts/fixtures/fetch.mjs` dumps the two program binaries and fetches the accounts in one `getMultipleAccounts` call so the reserves and vaults agree; the snapshot is not committed because the klend binary is BUSL licensed and ten megabytes. The script records the slot, the cluster's block time and the sha256 of both binaries. The last run used slot 454,900,180 (block time 2026-10-09 14:56:14 UTC), klend `ac5a94790923b0a8cccb981e6f20b5bbb4a67ae35490b685db3009b144771009` and farms `766533347d1e477537185192a8018962150898d457a0e4e98c0c5a2ba9133afd`.
+`anchor test` builds both programs and runs fourteen LiteSVM tests of `credit_line` (`contracts/credit_line/tests/credit_line.rs`) against the real klend and farms programs and a single-slot snapshot of Kamino's mainnet Main Market: the lending market, the SOL and USDC reserves with their vaults and mints, Scope prices and the SOL collateral farm. `contracts/fixtures/fetch.mjs` dumps the two program binaries and fetches the accounts in one `getMultipleAccounts` call so the reserves and vaults agree; the snapshot is not committed because the klend binary is BUSL licensed and ten megabytes. The script records the slot, the cluster's block time and the sha256 of both binaries. The last run used slot 454,900,180 (block time 2026-10-09 14:56:14 UTC), klend `ac5a94790923b0a8cccb981e6f20b5bbb4a67ae35490b685db3009b144771009` and farms `766533347d1e477537185192a8018962150898d457a0e4e98c0c5a2ba9133afd`.
 
 | Test | Ported from |
 |---|---|
@@ -240,7 +278,9 @@ Limits and trust, stated plainly:
 | `open_line_rejects_foreign_and_referred_obligations` | new |
 | `line_seeds_bind_payouts_and_repayments_to_the_signer` | new |
 
-`node --test` in `scripts/` adds the client checks: the sandbox rail's repayment guard against a stubbed obligation, transaction confirmation without websockets, events paired with their own transaction when the RPC answers a batch out of order, the `@solana/web3.js` load path that Vercel's runtime uses, amounts and dates in the display language, the wrapped SOL account around every `open_line` and `repay_line`, and the Arf line: terms from the environment, which transactions count as draws and repayments (wrong signer, amount, account or mint, failed transactions and look-alike memos are ignored), the ledger with partial repayments, overdue draws and a draw that landed twice, the draw decision, the order of repayments, and the history read that fetches only Arf records, keeps them and stops on one it cannot read.
+`cargo test` also runs twelve LiteSVM tests of `arf_line` (`contracts/arf_line/tests/arf_line.rs`) against the SPL Token program that LiteSVM ships: the terms at creation, funding and withdrawal by the provider alone, a draw's transfer, fee and due date, exactly-once references, refusals past the limit, beyond the vault, while frozen and for empty requests, an overdue draw stopping new ones until it is repaid, first-in-first-out repayment that moves the head, the order and next-draw rules, a draw of another line, repayment by anyone, and term changes. Removing the overdue check, the next-draw check or the fee rounding each fails one of them.
+
+`node --test` in `scripts/` adds the client checks: the sandbox rail's repayment guard against a stubbed obligation, transaction confirmation without websockets, events paired with their own transaction when the RPC answers a batch out of order, the `@solana/web3.js` load path that Vercel's runtime uses, amounts and dates in the display language, the wrapped SOL account around every `open_line` and `repay_line`, and the `arf_line` client: discriminators pinned to the ones the program was built with, account decoding at the program's offsets, the fee and what is owed, the refusals in the program's order, open draws and their status, first-in-first-out allocation with the next open draw named, instruction data and account order, and the line read that refuses a line run by another operator, for another mint or owned by another program.
 
 Amounts are `u64`, so the Soroban `NegativeAmount` check cannot be expressed; its test now covers a swapped reserve pair, and the payout test covers empty and oversized references.
 
@@ -252,7 +292,7 @@ The five screens, the layout, the Sora typeface, the lavender accent, the TR and
 - **Piyasa.** The Kamino market's active reserves: price, supplied, borrowed, utilization, supply and borrow APY, maximum LTV and liquidation LTV, market status. Below it, Paralyx's hourly and cumulative lira payouts and cumulative USDC borrowed, from program events.
 - **Hareketler.** Protocol totals and the event feed, filterable to your address, every row linked to Solana Explorer.
 - **Hat aç.** Devnet SOL faucet, the collateral and borrow form with the borrow limit preview, the collateral withdrawal card, the roadmap.
-- **Takas.** Cash out and repay in lira through the rail; next to it the Arf line: available against the limit, outstanding, the USDC it holds, term, fee and the last draws with due date and status, each linked to its transaction. Receipts say whether a repayment was funded by an Arf draw or the treasury float and how much of a cash-out went back to Arf. On mainnet, the BiLira card and the Arf card list their open work.
+- **Takas.** Cash out and repay in lira through the rail; next to it the Arf line, read from `arf_line`: available against the limit, outstanding, the USDC in the vault, term, fee, a freeze, and the last draws by sequence with due date and status, each linked to its draw account, plus links to the program, the line and the vault. Receipts say whether a repayment was funded by an Arf draw or the treasury float and how much of a cash-out went back to Arf. On mainnet, the BiLira card and the Arf card list their open work.
 
 Data sources: Kamino reserves and the user's obligation through klend-sdk (`web/src/lib/kamino.ts`, loaded on demand); SOL/USD from Pyth through the rail function (Hermes), with Pyth's on-chain push feed as the fallback; USD/TRY and price history from the rail function (`web/api/rail.ts`). Transactions are built in `web/src/lib/paralyx.ts`, which the Node scripts import too, and sent as version 0 transactions with an address lookup table that holds the program, market, reserve, vault, mint and oracle accounts.
 
@@ -262,22 +302,22 @@ klend-sdk 13 imports three helpers from kliquidity-sdk, which pulls in Orca's We
 
 `web/src/lib/rail.ts` defines `FiatRail`: `quote`, `startPayout`, `confirmPayout`, `startDeposit`, `settleDeposit`. Two implementations:
 
-- **SandboxRail** (devnet). Backed by `web/api/rail.ts`, served at `/api/rail` by a Vercel function and by the Vite dev and preview servers. Quotes USD/TRY plus 50 bps. A payout returns an HMAC-signed instruction; after the user's transfer, the server reads the transaction from devnet and checks the USDC amount, the treasury token account, the authority and the memo before it returns an `SBX-` reference. A deposit is settled by a transfer from the sandbox treasury tagged with the deposit id, so a retry after the first settlement confirms returns that transfer instead of paying again; the instruction expires after 15 minutes. The treasury only pays repayments: when the instruction is issued and again before it pays, the server reads the wallet's Kamino obligation and requires USDC debt in the configured market, a wallet balance below that debt, and an amount no larger than the debt plus 2% and 1.5 USDC (so the 50 TRY minimum still clears a small debt). The sandbox does not lock concurrent settle calls, which is acceptable only because it moves devnet USDC. Every screen, receipt and reference says that no lira moved. With an Arf sandbox line configured, an Arf draw funds the deposit first and the treasury float is only the fallback; see [Arf liquidity behind the rail](#arf-liquidity-behind-the-rail).
+- **SandboxRail** (devnet). Backed by `web/api/rail.ts`, served at `/api/rail` by a Vercel function and by the Vite dev and preview servers. Quotes USD/TRY plus 50 bps. A payout returns an HMAC-signed instruction; after the user's transfer, the server reads the transaction from devnet and checks the USDC amount, the treasury token account, the authority and the memo before it returns an `SBX-` reference. A deposit is settled by a transfer from the sandbox treasury tagged with the deposit id, so a retry after the first settlement confirms returns that transfer instead of paying again; the instruction expires after 15 minutes. The treasury only pays repayments: when the instruction is issued and again before it pays, the server reads the wallet's Kamino obligation and requires USDC debt in the configured market, a wallet balance below that debt, and an amount no larger than the debt plus 2% and 1.5 USDC (so the 50 TRY minimum still clears a small debt). The sandbox does not lock concurrent settle calls, which is acceptable only because it moves devnet USDC. Every screen, receipt and reference says that no lira moved. With an Arf line configured, a draw from it funds the deposit first and the treasury float is only the fallback; see [Arf liquidity behind the rail](#arf-liquidity-behind-the-rail).
 - **BiLiraDirectRail** (mainnet). A stub that throws `RailNotWired` and carries the production work as data, rendered on the mainnet Takas screen: partner agreement and API access, KYC at BiLira, quote, USDC or TRYB (`A94X2fRy3wydNShU4dRaDyap2UuoeWJGWyATtyp61WZf`) payout to the user's own IBAN with a webhook reference, lira deposit to USDC, `record_payout` with BiLira's order id, and confirmation of BiLira's final authorization.
 
 USD/TRY: Pyth publishes `FX.USD/TRY` (feed `032a2eba…e058`), but Hermes has required an API key since 26 August 2026 and FX feeds need an FX entitlement on that key. With `PYTH_API_KEY` set and entitled, the rail uses Pyth; otherwise it falls back to the previous source, Reflector's FX oracle, read server side. The current key is entitled for crypto feeds only, so SOL history comes from Pyth and USD/TRY from Reflector.
 
 ## Arf liquidity behind the rail
 
-[Arf](https://arf.one) is a liquidity and settlement platform regulated in Switzerland. It lends short-term USDC, repaid in 1 to 5 days and backed by receivables, to licensed payment companies so they can settle a corridor without prefunding the destination. The lira rail has that problem on the repayment leg: the user wires lira and expects the Kamino debt to shrink now, but the operator has the USDC only once it has converted the lira. Without a lender the operator keeps a USDC float, which is what the sandbox treasury was. With `ARF_SANDBOX_SECRET` set, the rail runs without one:
+[Arf](https://arf.one) is a liquidity and settlement platform regulated in Switzerland. It lends short-term USDC, repaid in 1 to 5 days and backed by receivables, to licensed payment companies so they can settle a corridor without prefunding the destination. The lira rail has that problem on the repayment leg: the user wires lira and expects the Kamino debt to shrink now, but the operator has the USDC only once it has converted the lira. Without a lender the operator keeps a USDC float, which is what the sandbox treasury was. With `ARF_LINE` set to an `arf_line` line whose operator is the treasury, the rail runs without one:
 
-- **Draw.** `settle` reads the line and, when it can lend, sends one transaction that the treasury and the line both sign: line to treasury, treasury to user, and the memo `ARF-DRAW <id> amount=<units> fee=<units> due=<unix> ref=<deposit id>`. The draw id is the deposit id with an `ARF-DR-` prefix, so one deposit is one draw and a retried settle returns the first transfer.
-- **Repayment.** Confirming a cash-out sends the USDC that just arrived back to the line: one treasury-signed transfer and the memo `ARF-REPAY <id>:<units>,…`, earliest due first, at most eight draws per transaction, the last one partly if the USDC runs out. If the repayment fails the payout stands, and the receipt says the rail repays Arf on the next cash-out. `POST /api/rail?action=arf-sweep` repays on demand.
-- **Refusal.** No draw while one is past due, when the outstanding amount, fees included, would pass `ARF_LIMIT_USDC`, or beyond what the line holds. The deposit then falls back to the treasury float and the receipt says why; with no float either, settle fails and names both reasons.
-- **Ledger.** There is no database. `GET /api/rail?action=arf` rebuilds the line from the history of its USDC account. It fetches only signatures whose memo is an Arf record, one transaction at a time so the public RPC's rate limit is retried, and keeps them in memory. A record counts only when the right key signed the transaction and a `transferChecked` between the line's and the treasury's accounts moves exactly the memo's amount of the configured mint, so anyone reading the explorer arrives at the same ledger. A record that cannot be read yet stops the read instead of being skipped, because a missing draw would understate what is outstanding and let the next one pass the limit.
-- **Terms.** `ARF_TERM_DAYS` (a whole number from 1 to 5, the range Arf states, default 3), `ARF_FEE_BPS` (per draw, rounded up, default 10) and `ARF_LIMIT_USDC` (default 500). They are sandbox placeholders, not Arf's pricing, which is agreed per partner and not public.
+- **Draw.** `settle` reads the line and checks it the way the program will: not frozen, oldest open draw not past due, the outstanding amount with this draw and its fee within the limit, enough in the vault. If it can lend, the treasury signs one `draw` with the deposit id as the reference, paying the user's USDC account straight from Arf's vault. A settle that finds the draw account returns it, and a settle that loses a race to the same deposit returns the winning draw instead of failing.
+- **Repayment.** Confirming a cash-out repays open draws from the oldest with the USDC in the treasury, up to eight per transaction, the last one partly if the USDC runs out, passing the next open draw as the program requires. If the repayment fails the payout stands, and the receipt says the rail repays Arf on the next cash-out. `POST /api/rail?action=arf-sweep` repays on demand.
+- **Refusal.** When the line cannot lend, the deposit falls back to the treasury float and the receipt says why (`frozen`, `overdue`, `limit` or `liquidity`); with no float either, settle fails and names both reasons.
+- **Ledger.** There is no database and no history scan. `GET /api/rail?action=arf` reads the line and its vault in one call and the line's draw accounts in another (`getProgramAccounts` filtered by the draw discriminator and the line), and refuses a line run by another operator, for another mint or owned by another program.
+- **Terms.** They live in the line account and only Arf changes them, with `scripts/arf.mjs terms`. The values on devnet (limit 500 USDC, 3 days, 10 bps) are placeholders, not Arf's pricing, which is agreed per partner and not public. The program bounds them: a term of one to five days, the range Arf states, and a fee of at most 500 bps.
 
-What is real and what is not: the transfers, the signatures, the memos, the ledger and the limits run on devnet. The line is a keypair the rail holds, standing in for Arf, and its USDC is devnet USDC. Arf has no public API or SDK, its public material names Circle and Stellar and not Solana, and it lends only to licensed institutions, so in production the line belongs to the licensed rail operator, not to Paralyx, and Paralyx still holds no funds. The mainnet Takas screen lists the remaining steps (`ARF_TODO` in `web/src/lib/rail.ts`). As with the treasury float, concurrent settles are not locked: two settles of one deposit racing could both draw, and the ledger then counts both transfers under one id. The next step is to move the ledger into the program, with one account per draw so a draw and its repayment can happen only once.
+What is real and what is not: the program, its accounts, the draws, the repayments and every refusal run on devnet. The capital is devnet USDC that a test key, standing in for Arf, put into the vault. Arf has no public API or SDK, its public material names Circle and Stellar and not Solana, and it lends only to licensed institutions, so in production the line's operator is the licensed rail operator and Arf signs `create_line` and `fund` itself. The mainnet Takas screen lists the remaining steps (`ARF_TODO` in `web/src/lib/rail.ts`).
 
 ## Choosing the network
 
@@ -286,9 +326,9 @@ Kamino's klend program is deployed on devnet under the mainnet program id. A sca
 ## Run it
 
 ```
-contracts/            Anchor workspace: credit_line program, LiteSVM tests, mainnet fixtures script
+contracts/            Anchor workspace: credit_line and arf_line programs, LiteSVM tests, mainnet fixtures script
 web/                  React + Vite app, Vercel function for the rail (api/)
-scripts/              Node helpers: devnet setup, open a line, repay, cash out, repay in lira, fund the Arf line, decode events
+scripts/              Node helpers: devnet setup, open a line, repay, cash out, repay in lira, run an Arf line, decode events
 docs/brand/           Paralyx marks
 ```
 
@@ -311,6 +351,14 @@ node ../scripts/setup-devnet.mjs <deployer.json> <treasury.json>
 
 `setup-devnet.mjs` initializes the config, creates the address lookup table and prepares the sandbox treasury's USDC account.
 
+Without Anchor CLI 1.2 the programs build with `cargo build-sbf --tools-version v1.57 --arch v3` in each program's folder. Deploy `arf_line` with an Agave 4.x CLI: Solana CLI 2.x cannot parse an SBPF v3 binary and stops before sending anything. Then open a line with the rail treasury as its operator:
+
+```bash
+solana program deploy target/deploy/arf_line.so --program-id target/deploy/arf_line-keypair.json --keypair <deployer.json> -u devnet
+node ../scripts/arf.mjs create <arf.json> <treasury address> 500 3 10   # limit 500 USDC, 3 days, 10 bps; prints ARF_LINE
+node ../scripts/arf.mjs fund <arf.json> <line address> 5                # 5 devnet USDC from Arf's account into the vault
+```
+
 ### App
 
 ```bash
@@ -319,7 +367,7 @@ npm install
 npm run dev
 ```
 
-Server environment for the rail (`web/.env.local` locally, project settings on Vercel): `SANDBOX_TREASURY_SECRET` (the devnet treasury keypair as a JSON array), `RAIL_RPC` (devnet RPC), `PYTH_API_KEY` (optional). For the Arf line: `ARF_SANDBOX_SECRET` (the line's keypair as a JSON array; leave it unset to run the float alone), and optionally `ARF_LIMIT_USDC`, `ARF_TERM_DAYS` and `ARF_FEE_BPS`. Give the rail its own `RAIL_RPC`: the browser polls the public devnet endpoint too, and on one machine the two share its rate limit. `VITE_BURNER_WALLET=1` adds the wallet adapter's burner wallet on devnet for local testing; never set it for a public build.
+Server environment for the rail (`web/.env.local` locally, project settings on Vercel): `SANDBOX_TREASURY_SECRET` (the devnet treasury keypair as a JSON array), `RAIL_RPC` (devnet RPC), `PYTH_API_KEY` (optional). For the Arf line: `ARF_LINE`, the line's address (leave it unset to run the float alone), and `ARF_PROGRAM` only if `arf_line` lives at another address. The rail holds no Arf key. Give the rail its own `RAIL_RPC`: the browser polls the public devnet endpoint too, and on one machine the two share its rate limit. `VITE_BURNER_WALLET=1` adds the wallet adapter's burner wallet on devnet for local testing; never set it for a public build.
 
 ### Scripts
 
@@ -328,7 +376,9 @@ node scripts/open-line.mjs <keypair.json> 1 10        # 1 SOL collateral, borrow
 node scripts/cashout.mjs <keypair.json> 4 <rail url>  # sandbox cash-out and record_payout
 node scripts/repay.mjs <keypair.json> max max         # repay everything, withdraw everything
 node scripts/lira-repay.mjs <keypair.json> 100 <rail url>   # ₺100 deposit through the rail, then repay_line
-node scripts/arf-fund.mjs <keypair.json> <line address> 6   # put 6 devnet USDC into the Arf sandbox line
+node scripts/arf.mjs show <line address>                   # the line, its vault and open draws
+node scripts/arf.mjs terms <arf.json> <line> 500 3 10 frozen   # freeze (or open) the line, set limit, term, fee
+node scripts/arf.mjs withdraw <arf.json> <line> 2          # Arf takes 2 USDC back out of the vault
 node scripts/events.mjs devnet                        # decode program events
 curl -X POST '<rail url>?action=arf-sweep'            # repay open Arf draws from the treasury
 curl '<rail url>?action=arf'                          # the Arf line and its last draws
@@ -347,14 +397,15 @@ The scripts import `web/src/lib`, so install the web dependencies first.
 - **One rail interface.** The sandbox and the production rail share `FiatRail`, so the Takas screen does not change when BiLira is wired.
 - **Sandbox is never real.** The `SBX-` prefix, the badge, the receipt note and the README all say so.
 - **Arf first, float as fallback.** Drawing on every deposit is what a rail without prefunding looks like, so every lira repayment shows the line at work; the float only covers refusals.
-- **The Arf ledger is on chain.** Draws and repayments are ordinary transfers with signed memos, rebuilt from history, so the line needs no database and the ledger can be checked on an explorer.
+- **The Arf line is a program, not a server rule.** The first version kept the ledger in memos on a key the rail held; the program moves the limit, term, fee, freeze, exactly-once draws and repayment order out of the server and into code both parties can read. The rail no longer holds Arf's key.
+- **A separate program.** `credit_line` stays a router that never holds funds; the escrow of a lender's capital lives in its own program with its own upgrade authority.
 - **Renamed field.** `anchor_tx_id` is now `rail_tx_id`: the Stellar anchor no longer exists, the rail does.
 - **Renamed argument.** DEVIATION: `repay_line`'s `withdraw_collateral` is now `withdraw_ctokens`, because Kamino withdraws in collateral tokens and a lamport-looking name invited a wrong amount. The `LineRepaid` event keeps `withdraw_collateral` and reports the lamports received.
 - **Exact amounts only.** `u64::MAX` is Kamino's "as much as allowed"; the program accepts it only where it means "all of it": repaying the debt, and withdrawing once the debt is gone.
 
 ## Regulatory posture
 
-Paralyx is non-custodial software. It never holds user funds, never sets rates and is not the lender; the Kamino market is the counterparty and the obligation belongs to the user. It never touches lira: the regulated fiat party does KYC, AML and bank settlement. For production that party is BiLira: Bilira Kripto Varlık Alım Satım Platformu A.Ş., the issuer of the TRYB lira stablecoin, which redeems TRYB to the holder's own bank account. As of 1 October 2026 BiLira appears on the Capital Markets Board's provisional list of crypto asset service providers operating under the transitional provision of Law 6362; its operating license application was completed in July 2025, and the final authorization has not been verified. No public BiLira off-ramp API was found, so the integration needs a partner agreement. The devnet sandbox moves only devnet USDC and simulates the bank; it is not a payment service. Arf is regulated in Switzerland and works only with licensed financial institutions: its line would belong to the licensed rail operator, whose authorization covers the lira leg, and Paralyx would neither borrow from Arf nor hold the line's funds. Before mainnet: an audit of `credit_line`, a legal opinion on the CASP framework of Law 7518 and on consumer credit marketing, and BiLira's final authorization.
+Paralyx is non-custodial software. It never holds user funds, never sets rates and is not the lender; the Kamino market is the counterparty and the obligation belongs to the user. It never touches lira: the regulated fiat party does KYC, AML and bank settlement. For production that party is BiLira: Bilira Kripto Varlık Alım Satım Platformu A.Ş., the issuer of the TRYB lira stablecoin, which redeems TRYB to the holder's own bank account. As of 1 October 2026 BiLira appears on the Capital Markets Board's provisional list of crypto asset service providers operating under the transitional provision of Law 6362; its operating license application was completed in July 2025, and the final authorization has not been verified. No public BiLira off-ramp API was found, so the integration needs a partner agreement. The devnet sandbox moves only devnet USDC and simulates the bank; it is not a payment service. Arf is regulated in Switzerland and works only with licensed financial institutions: the line's operator would be the licensed rail operator, whose authorization covers the lira leg, and Paralyx would not borrow from Arf. The `arf_line` program escrows Arf's capital in its vault; `credit_line` still holds no user funds. Before mainnet: an audit of `credit_line`, a legal opinion on the CASP framework of Law 7518 and on consumer credit marketing, and BiLira's final authorization.
 
 ## Roadmap
 
@@ -364,14 +415,15 @@ Paralyx is non-custodial software. It never holds user funds, never sets rates a
 4. **Omnichain entry.** USDC from other chains through Circle CCTP.
 5. **Health guardian.** Alerts and a one-click top-up when the health factor drops; with the Arf line, a lira top-up reaches the debt in seconds.
 6. **Arf in production.** The licensed rail operator applies for Arf Liquidity; settlement in USDC on Solana is confirmed with Arf; the sandbox terms give way to the agreement.
-7. **Arf ledger in the program.** One account per draw, signed by the line and the rail, so a draw and its repayment can land only once, and `record_payout` co-signed by the rail instead of self-attested.
+7. **`arf_line` on mainnet.** An audit, the upgrade authority under a multisig of Arf and the operator, a verifiable build.
+8. **Rail-attested payouts.** `record_payout` co-signed by the rail instead of self-attested; it needs an upgrade of `credit_line`, whose authority is upstream's.
 
 ## Lineage
 
 - **2025: Paralyx LSD prototype on Stellar** ([paralyx-LSD/paralyx-protocol](https://github.com/paralyx-LSD/paralyx-protocol)): Ethereum liquid staking tokens bridged to a Soroban lending pool.
 - **September 2026: Paralyx on Stellar**, the rebuild around Blend v2 and a SEP-6 TRY anchor, built at the Rise In x Stellar Pro Hackathon in Istanbul. Preserved at tag `stellar-v1` (testnet contract `CDZ22YMZ…L5Z4B`, mainnet contract `CDCYHJPS…C7ITC`), including the demo narration, jury notes and pitch material.
 - **October 2026: Paralyx on Solana**, [wienerlabs/paralyx-solana](https://github.com/wienerlabs/paralyx-solana) branch `solana-port`: same product, brand and screens, with Kamino Lend as the credit engine, the Solana wallet adapter, Pyth prices and a rail interface for the lira leg.
-- **October 2026: Arf liquidity behind the rail**, this repository: lira repayments funded by Arf draws instead of a prefunded float, with the ledger on chain, for the Arf x Superteam Türkiye University Track.
+- **October 2026: Arf liquidity behind the rail**, this repository, for the Arf x Superteam Türkiye University Track: lira repayments funded by Arf draws instead of a prefunded float, first with a memo ledger (13 October), then with the `arf_line` program (14 October).
 
 ## Team
 
