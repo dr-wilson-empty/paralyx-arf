@@ -4,7 +4,7 @@
 
 **Turkish lira liquidity without selling your SOL.** Post SOL as collateral to a Kamino Lend market, borrow USDC, cash the USDC out as lira through a fiat rail, repay in lira. Paralyx is non-custodial software: the Kamino obligation belongs to the user's wallet, the Kamino market is the lender, a regulated rail is the fiat party, and the Paralyx program never holds funds. **Arf liquidity sits behind the rail:** Arf's USDC waits in the vault of `arf_line`, a second Anchor program; a lira repayment reaches the Kamino debt in seconds from a draw the rail makes within Arf's limit, term and fee, instead of from a prefunded float, and the rail repays the draw, oldest first, from the USDC that cash-outs bring in ([Arf liquidity behind the rail](#arf-liquidity-behind-the-rail)).
 
-Live app (upstream, without the Arf line): [paralyx.wienerlabs.xyz](https://paralyx.wienerlabs.xyz) · Programs (devnet): `credit_line` [`PLXama5S…yG6qr`](https://explorer.solana.com/address/PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr?cluster=devnet), `arf_line` [`ARF4tQPA…dvAoC`](https://explorer.solana.com/address/ARF4tQPAqQdGScZK7kF2yWK4tpkp99mPpEkr2rtdvAoC?cluster=devnet) · Source: this repository, `main`, which continues [wienerlabs/paralyx-solana](https://github.com/wienerlabs/paralyx-solana) branch `solana-port`
+Submission kit for the Arf x Superteam Türkiye University Track: [docs/arf-track](docs/arf-track/README.md) · Live app (upstream, without the Arf line): [paralyx.wienerlabs.xyz](https://paralyx.wienerlabs.xyz) · Programs (devnet): `credit_line` [`PLXama5S…yG6qr`](https://explorer.solana.com/address/PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr?cluster=devnet), `arf_line` [`ARF4tQPA…dvAoC`](https://explorer.solana.com/address/ARF4tQPAqQdGScZK7kF2yWK4tpkp99mPpEkr2rtdvAoC?cluster=devnet) · Source: this repository, `main`, which continues [wienerlabs/paralyx-solana](https://github.com/wienerlabs/paralyx-solana) branch `solana-port`
 
 > One switch in the top bar, two networks. **Devnet** is the working deployment: the Paralyx program composes Kamino's real klend program on devnet against a SOL and USDC market priced by live Pyth feeds, and the lira leg is a sandbox rail that is labeled as such on every screen. **Mainnet** is read only: the app shows Kamino's Main Market live, the Paralyx program is not deployed there yet, and the production lira rail (BiLira) is a stub with its remaining work listed in the app.
 
@@ -256,6 +256,7 @@ Limits, stated plainly:
 - **The vault is custody.** Unlike `credit_line`, this program holds funds: the lender's capital. Whoever holds its upgrade authority, on devnet the deployer `33qU3JFk…QC51REWhjKh`, could ship code that moves them. Before mainnet: an audit, the authority under a multisig of Arf and the operator or a timelock, and a verifiable build.
 - **Transfer-fee mints.** Amounts are recorded as sent. A Token-2022 mint with a transfer fee would leave the vault with less than the ledger says; USDC has no such fee, and the program does not refuse such mints.
 - **One mint and one operator per line.** A second corridor or a second operator is a second line.
+- **Draw accounts stay open.** They are the exactly-once record, so they are never closed; each costs the operator about 0.0022 SOL of rent.
 
 ## Tests
 

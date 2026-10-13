@@ -196,7 +196,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <footer className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-5 text-xs text-mute">
           <span>{t('footerBuilt')}</span>
           <div className="flex flex-wrap items-center gap-4">
-            <a className="inline-flex items-center gap-1.5 hover:text-ink" href="https://github.com/wienerlabs/paralyx" target="_blank" rel="noreferrer">
+            <a className="inline-flex items-center gap-1.5 hover:text-ink" href="https://github.com/dr-wilson-empty/paralyx-arf" target="_blank" rel="noreferrer">
               <Code2 className="h-3.5 w-3.5" /> GitHub
             </a>
             {PROGRAM_ID ? (
