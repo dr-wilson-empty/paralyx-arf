@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDownToLine, Banknote, FlaskConical } from 'lucide-react'
 import { RAIL_MAX_TRY, RAIL_MAX_USDC, RAIL_MIN_TRY, RAIL_MIN_USDC, addressLink } from '../config'
-import { rail, type RailQuote, type RailSettlement } from '../lib/rail'
+import { rail, type ArfRefusal, type RailFunding, type RailQuote, type RailSettlement } from '../lib/rail'
 import { REPAY_ALL, WITHDRAW_ALL, formatAmount, payToRail, recordPayout, repayLine, usdcUnits } from '../lib/solana'
+import { refreshArf } from '../lib/arf'
 import { addHistory } from '../lib/history'
-import { useT } from '../lib/i18n'
+import { useT, type DictKey } from '../lib/i18n'
 import { useLivePrices } from '../lib/prices'
 import { txLink, useFlow, type Shared } from '../lib/shared'
 import { MotionButton } from './MotionButton'
@@ -19,6 +20,13 @@ interface ReceiptData {
   rows: ReceiptRow[]
   links: { label: string; href: string }[]
   note?: string
+}
+
+const refusalKeys: Record<ArfRefusal, DictKey> = { limit: 'arfReasonLimit', overdue: 'arfReasonOverdue', liquidity: 'arfReasonLiquidity' }
+
+function fundingLabel(t: (key: DictKey) => string, funding: RailFunding): string {
+  if (funding.source === 'arf') return `${t('arfFundedDraw')} ${funding.drawId}`
+  return funding.reason ? `${t('arfFundedTreasury')} · ${t(refusalKeys[funding.reason])}` : t('arfFundedTreasury')
 }
 
 export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: Shared) {
@@ -119,8 +127,13 @@ export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: 
         { label: t('paidTry'), value: `₺${formatAmount(settled.amountOut)}` },
       ]
       if (settled.externalTransactionId) rows.push({ label: t('sandboxReference'), value: settled.externalTransactionId, copy: settled.externalTransactionId })
+      if (settled.arf && 'repaid' in settled.arf && settled.arf.repaid > 0) {
+        rows.push({ label: t('arfRepaidOnCashOut'), value: `${formatAmount(settled.arf.repaid)} USDC` })
+        if (settled.arf.signature) links.push({ label: t('arfRepayTx'), href: txLink(settled.arf.signature) })
+      }
       setReceipt({ title: t('receiptCashOut'), rows, links, note: t('sandboxNote') })
       addHistory(signer.address, { kind: 'cashout', title: t('receiptCashOut'), amount: `₺${formatAmount(settled.amountOut)}`, detail: settled.externalTransactionId, links })
+      refreshArf()
       await refresh()
     })
 
@@ -141,7 +154,8 @@ export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: 
         mark(2, 'active')
         settled = await rail.settleDeposit(deposit)
         mark(2, 'done')
-        mark(3, 'done', settled.signature ? txLink(settled.signature) : `${formatAmount(settled.amountOut)} USDC`)
+        const settledDetail = settled.signature ? txLink(settled.signature) : `${formatAmount(settled.amountOut)} USDC`
+        mark(3, 'done', settled.funding ? `${fundingLabel(t, settled.funding)} · ${settledDetail}` : settledDetail)
       }
       mark(4, 'active')
       const received = settled?.amountOut ?? 0
@@ -159,14 +173,17 @@ export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: 
           ? [
               { label: t('amountTry'), value: `₺${formatAmount(numeric)}` },
               { label: t('receivedUsdc'), value: `${formatAmount(received)} USDC` },
+              ...(settled.funding ? [{ label: t('arfFundedBy'), value: fundingLabel(t, settled.funding) }] : []),
             ]
           : []),
         { label: t('repaidUsdc'), value: `${formatAmount(repaid)} USDC` },
         { label: t('remainingDebt'), value: `${formatAmount(Math.max(0, position.debtUsdc - repaid))} USDC` },
       ]
       if (fullRepay && withdrawAll) rows.push({ label: t('collateralBack'), value: `${formatAmount(position.collateralSol, 4)} SOL` })
-      setReceipt({ title: t('receiptRepay'), rows, links, note: settled ? t('sandboxRepayNote') : t('walletRepayNote') })
+      const repayNote = settled ? (settled.funding?.source === 'arf' ? t('sandboxRepayNoteArf') : t('sandboxRepayNote')) : t('walletRepayNote')
+      setReceipt({ title: t('receiptRepay'), rows, links, note: repayNote })
       addHistory(signer.address, { kind: 'repay', title: t('receiptRepay'), amount: `${formatAmount(repaid)} USDC`, detail: settled ? `₺${formatAmount(numeric)}` : undefined, links })
+      if (settled) refreshArf()
       await refresh()
     })
 

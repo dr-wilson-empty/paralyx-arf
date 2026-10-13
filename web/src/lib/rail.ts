@@ -27,6 +27,16 @@ export interface DepositInstruction {
   token: string
 }
 
+export type ArfRefusal = 'overdue' | 'limit' | 'liquidity'
+
+export type RailFunding = { source: 'arf'; drawId: string; fee: number; dueAt: number } | { source: 'treasury'; reason?: ArfRefusal }
+
+export interface ArfSweep {
+  repaid: number
+  signature?: string
+  draws: { id: string; amount: number }[]
+}
+
 export interface RailSettlement {
   id: string
   status: 'completed'
@@ -34,7 +44,44 @@ export interface RailSettlement {
   amountOut: number
   externalTransactionId?: string
   signature?: string
+  funding?: RailFunding
+  arf?: ArfSweep | { error: string }
 }
+
+export interface ArfDraw {
+  id: string
+  ref: string
+  amount: number
+  fee: number
+  repaid: number
+  owed: number
+  drawnAt: number
+  dueAt: number
+  status: 'open' | 'repaid' | 'overdue'
+  signature: string
+  repayments: string[]
+}
+
+export type ArfFacility =
+  | { enabled: false }
+  | {
+      enabled: true
+      sandbox: boolean
+      facility: string
+      limit: number
+      termDays: number
+      feeBps: number
+      outstanding: number
+      available: number
+      liquidity: number
+      drawn: number
+      fees: number
+      repaid: number
+      overdue: number
+      count: number
+      draws: ArfDraw[]
+      updatedAt: number
+    }
 
 export interface FiatRail {
   readonly id: RailId
@@ -155,6 +202,37 @@ export class BiLiraDirectRail implements FiatRail {
   }
 }
 
+export const ARF_TODO: readonly TodoItem[] = [
+  {
+    tr: 'Arf hattı Paralyx\'in değil, lisanslı ray operatörünün (ör. BiLira) hattıdır: operatör Arf Liquidity\'ye başvurur ve Arf\'ın kurumsal onboarding sürecinden geçer. Arf yalnızca lisanslı finans kuruluşlarıyla çalışır; Paralyx fonları hiçbir zaman tutmaz.',
+    en: 'The Arf line belongs to the licensed rail operator (for example BiLira), not to Paralyx: the operator applies for Arf Liquidity and passes Arf\'s institutional onboarding. Arf works only with licensed financial institutions; Paralyx never holds the funds.',
+  },
+  {
+    tr: 'Takas varlığı ve ağ: çekilişlerin ve geri ödemelerin Solana üzerinde USDC ile yapılabildiğini Arf ile teyit et. Arf\'ın herkese açık materyallerinde Circle ve Stellar geçiyor; Solana üzerinde takas belgelenmemiş.',
+    en: 'Settlement asset and chain: confirm with Arf that draws and repayments can settle in USDC on Solana. Arf\'s public material names Circle and Stellar; settlement on Solana is not documented.',
+  },
+  {
+    tr: 'Alacak: her çekiliş, operatöre ulaşmış bir lira mevduatına ve kullanıcının açık Kamino borcuna dayanır; mevduat referansı çekilişin referansı olur, sandbox\'ta olduğu gibi.',
+    en: 'Receivable: every draw rests on a lira deposit the operator has received and on the user\'s open Kamino debt; the deposit reference becomes the draw reference, as in the sandbox.',
+  },
+  {
+    tr: 'Koşullar: limit, vade (Arf 1 ila 5 gün diyor) ve ücret sözleşmeden gelir. Sandbox değerleri (ARF_LIMIT_USDC, ARF_TERM_DAYS, ARF_FEE_BPS) yer tutucudur, Arf\'ın fiyatı değildir.',
+    en: 'Terms: limit, tenor (Arf states 1 to 5 days) and fee come from the agreement. The sandbox values (ARF_LIMIT_USDC, ARF_TERM_DAYS, ARF_FEE_BPS) are placeholders, not Arf\'s pricing.',
+  },
+  {
+    tr: 'Geri ödeme: operatör her çekilişi vadesi içinde, nakit çekimlerden gelen USDC ile ve aldığı lirayı USDC\'ye çevirerek öder. Vadesi geçmiş çekiliş varken yeni çekiliş yapılmaz.',
+    en: 'Repayment: the operator repays each draw within its term from cash-out USDC and by converting the lira it received. No new draw while one is overdue.',
+  },
+  {
+    tr: 'Şeffaflık: her çekiliş ve geri ödeme, tarafların imzaladığı bir memo ile zincirde kalır; böylece Arf\'ın zincir üstü raporlaması bu koridoru da kapsar.',
+    en: 'Transparency: every draw and repayment stays on chain under a memo the parties signed, so Arf\'s on-chain reporting covers this corridor too.',
+  },
+  {
+    tr: 'Hukuk: lira bacağı operatörün 7518 sayılı kanun kapsamındaki SPK iznine, hat ise Arf\'ın İsviçre\'deki düzenlemesine dayanır; yayından önce iki tarafın da hukuki incelemesi gerekir.',
+    en: 'Legal: the lira leg rests on the operator\'s CMB (SPK) authorization under Law 7518 and the line on Arf\'s Swiss regulation; both need legal review before launch.',
+  },
+]
+
 export const rail: FiatRail = NETWORK.rail === 'sandbox' ? new SandboxRail() : new BiLiraDirectRail()
 
 export interface FxReading {
@@ -181,4 +259,8 @@ export function getSolHistory(range: string): Promise<{ points: { t: number; v: 
 
 export function getTreasury(): Promise<{ treasury: string; usdc: number }> {
   return call('treasury')
+}
+
+export function getArfFacility(): Promise<ArfFacility> {
+  return call('arf')
 }

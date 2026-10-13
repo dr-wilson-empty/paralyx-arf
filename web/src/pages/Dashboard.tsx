@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { ArrowDownToLine, RefreshCw } from 'lucide-react'
+import { ArrowDownToLine, Landmark, RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { ActivityList, Charts, LineCard, WalletCard } from '../components/cards'
 import { LiveMarketCard } from '../components/LiveMarketCard'
@@ -61,6 +61,9 @@ export function Dashboard() {
             <span className="pill">Solana wallet adapter</span>
             <span className="pill">
               <TokenIcon symbol="TRY" size={14} className="mr-1.5" /> {HAS_SANDBOX_RAIL ? 'Sandbox rail' : 'BiLira'}
+            </span>
+            <span className="pill">
+              <Landmark className="mr-1.5 h-3.5 w-3.5" /> {HAS_SANDBOX_RAIL ? 'Arf · sandbox' : 'Arf'}
             </span>
           </div>
         </div>

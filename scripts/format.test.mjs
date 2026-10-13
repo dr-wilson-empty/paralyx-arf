@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { formatAmount, formatClock, setDisplayLocale } from '../web/src/lib/format.ts'
+import { formatAmount, formatClock, formatDateTime, setDisplayLocale } from '../web/src/lib/format.ts'
 
 test('amounts follow the display language', () => {
   setDisplayLocale('en-US')
@@ -17,4 +17,12 @@ test('clock times follow the display language', () => {
   assert.match(formatClock(afternoon), /^3:05:09\sPM$/)
   setDisplayLocale('tr-TR')
   assert.equal(formatClock(afternoon), '15:05:09')
+})
+
+test('due dates follow the display language', () => {
+  const afternoon = new Date(2026, 9, 12, 15, 5, 9).getTime()
+  setDisplayLocale('en-US')
+  assert.match(formatDateTime(afternoon), /^Oct 12, 03:05\sPM$/)
+  setDisplayLocale('tr-TR')
+  assert.equal(formatDateTime(afternoon), '12 Eki 15:05')
 })

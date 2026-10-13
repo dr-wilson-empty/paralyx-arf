@@ -12,7 +12,7 @@ import { PriceChart, type Point } from './PriceChart'
 import { Steps } from './Steps'
 import { TokenIcon, type TokenSymbol } from './TokenIcon'
 
-function Metric({ label, value, hint, symbol }: { label: string; value: string; hint?: string; symbol?: TokenSymbol }) {
+export function Metric({ label, value, hint, symbol }: { label: string; value: string; hint?: string; symbol?: TokenSymbol }) {
   return (
     <div className="rounded-2xl border border-line p-4">
       <div className="flex items-center gap-2 text-xs text-mute">

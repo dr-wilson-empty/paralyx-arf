@@ -1,3 +1,4 @@
+import { ArfCard, ArfPendingCard } from '../components/ArfCard'
 import { ExchangeCard, RailPendingCard } from '../components/ExchangeCard'
 import { History } from '../components/exchange/History'
 import { HAS_SANDBOX_RAIL } from '../config'
@@ -21,6 +22,7 @@ export function Exchange() {
         </div>
         <div className="space-y-5 lg:col-span-2">
           <LineCard {...shared} />
+          {HAS_SANDBOX_RAIL ? <ArfCard /> : <ArfPendingCard />}
         </div>
       </section>
     </div>

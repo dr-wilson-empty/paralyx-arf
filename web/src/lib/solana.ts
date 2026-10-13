@@ -66,7 +66,7 @@ export function fromUnits(value: bigint | number, decimals: number, places = 2):
   return formatAmount(Number(value) / 10 ** decimals, places)
 }
 
-export { formatAmount, formatClock } from './format'
+export { formatAmount, formatClock, formatDateTime } from './format'
 
 export const lamports = (sol: string | number) => toUnits(sol, SOL_DECIMALS)
 export const usdcUnits = (usdc: string | number) => toUnits(usdc, USDC_DECIMALS)
