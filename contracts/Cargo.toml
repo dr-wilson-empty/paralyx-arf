@@ -1,5 +1,5 @@
 [workspace]
-members = ["credit_line"]
+members = ["credit_line", "arf_line"]
 resolver = "2"
 
 [workspace.package]

@@ -9,16 +9,18 @@ skip-lint = true
 
 [programs.localnet]
 credit_line = "PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr"
+arf_line = "ARF4tQPAqQdGScZK7kF2yWK4tpkp99mPpEkr2rtdvAoC"
 
 [programs.devnet]
 credit_line = "PLXama5SomfMXpUzgwAVhDXMJrESMX8JP93RGRyG6qr"
+arf_line = "ARF4tQPAqQdGScZK7kF2yWK4tpkp99mPpEkr2rtdvAoC"
 
 [workspace]
-members = ["credit_line"]
+members = ["credit_line", "arf_line"]
 
 [provider]
 cluster = "localnet"
 wallet = "../.keys/deployer.json"
 
 [scripts]
-test = "node fixtures/fetch.mjs && cargo test --package credit_line"
+test = "node fixtures/fetch.mjs && cargo test"
