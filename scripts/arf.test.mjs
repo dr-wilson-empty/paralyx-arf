@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Keypair, PublicKey } from '../web/src/lib/cli.ts'
-import { arfAllocate, arfDraw, arfDrawId, arfLedger, arfStatus, arfTerms, drawMemo, fundingOf, owed, readArfEntry, repayMemo } from '../web/api/rail.ts'
+import { arfAllocate, arfDraw, arfDrawId, arfEntries, arfLedger, arfStatus, arfTerms, drawMemo, fundingOf, owed, readArfEntry, repayMemo } from '../web/api/rail.ts'
 
 const USDC = 1_000_000n
 const DAY = 86_400
@@ -184,4 +184,40 @@ test('tells an Arf-funded settlement from a treasury one by the memo the RPC ret
   const memo = `[95] ${drawMemo({ id: A, amount: 5n * USDC, fee: 5_000n, dueAt: 1_700_000_000, ref: 'SBX-DP-AAAAAAAAAA' })}`
   assert.deepEqual(fundingOf(memo), { source: 'arf', drawId: A, fee: 0.005, dueAt: 1_700_000_000 })
   assert.deepEqual(fundingOf('[17] SBX-DP-AAAAAAAAAA'), { source: 'treasury' })
+})
+
+function rpc(history, transactions) {
+  const fetched = []
+  return {
+    fetched,
+    connection: {
+      getSignaturesForAddress: async () => history,
+      getParsedTransaction: async (signature) => {
+        fetched.push(signature)
+        return transactions[signature] ?? null
+      },
+    },
+  }
+}
+
+test('reads only Arf records from the line history, one transaction at a time, and keeps them', async () => {
+  const draws = { 'cache-d1': drawTx(A, USDC), 'cache-r1': repayTx([{ id: A, amount: USDC }]) }
+  const history = [
+    { signature: 'cache-r1', err: null, memo: `[44] ${repayMemo([{ id: A, amount: USDC }])}` },
+    { signature: 'cache-top-up', err: null, memo: null },
+    { signature: 'cache-failed', err: { InstructionError: [0, 'Custom'] }, memo: '[20] ARF-DRAW whatever' },
+    { signature: 'cache-d1', err: null, memo: `[90] ${drawMemo({ id: A, amount: USDC, fee: 0n, dueAt: 1, ref: 'SBX-DP-AAAAAAAAAA' })}` },
+  ]
+  const first = rpc(history, draws)
+  const entries = await arfEntries(first, keys)
+  assert.deepEqual(first.fetched, ['cache-r1', 'cache-d1'])
+  assert.deepEqual(entries.map((entry) => entry.kind), ['repay', 'draw'])
+  const second = rpc(history, draws)
+  assert.equal((await arfEntries(second, keys)).length, 2)
+  assert.deepEqual(second.fetched, [])
+})
+
+test('refuses to build the ledger while an Arf record cannot be read', async () => {
+  const history = [{ signature: 'missing-d1', err: null, memo: '[90] ARF-DRAW ARF-DR-AAAAAAAAAA amount=1 fee=0 due=1 ref=SBX-DP-AAAAAAAAAA' }]
+  await assert.rejects(arfEntries(rpc(history, {}), keys), /not readable yet/)
 })

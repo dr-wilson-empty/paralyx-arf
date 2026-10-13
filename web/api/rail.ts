@@ -23,7 +23,6 @@ const DEPOSIT_MARGIN_UNITS = 1_500_000n
 const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'
 const ARF_DEFAULTS = { limitUsdc: 500, termDays: 3, feeBps: 10 }
 const ARF_HISTORY_LIMIT = 1000
-const ARF_FETCH_CHUNK = 25
 const ARF_MAX_REPAY_PARTS = 8
 const ARF_DRAW_MEMO = /^ARF-DRAW (ARF-DR-[0-9A-F]{10}) amount=(\d+) fee=(\d+) due=(\d+) ref=(SBX-DP-[0-9A-F]{10})$/
 const ARF_REPAY_MEMO = /^ARF-REPAY ((?:ARF-DR-[0-9A-F]{10}:\d+)(?:,ARF-DR-[0-9A-F]{10}:\d+)*)$/
@@ -567,17 +566,14 @@ function arfKeys(e: Env, facility: Keypair, treasury: Keypair): ArfKeys {
 
 const arfTransactions = new Map<string, ParsedTransactionWithMeta>()
 
-async function arfEntries(e: Env, keys: ArfKeys): Promise<ArfEntry[]> {
+export async function arfEntries(e: Pick<Env, 'connection'>, keys: ArfKeys): Promise<ArfEntry[]> {
   const history = await e.connection.getSignaturesForAddress(new PublicKey(keys.facilityAta), { limit: ARF_HISTORY_LIMIT })
-  const signatures = history.filter((entry) => !entry.err).map((entry) => entry.signature)
-  const missing = signatures.filter((signature) => !arfTransactions.has(signature))
-  for (let index = 0; index < missing.length; index += ARF_FETCH_CHUNK) {
-    const chunk = missing.slice(index, index + ARF_FETCH_CHUNK)
-    const fetched = await e.connection.getParsedTransactions(chunk, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-    chunk.forEach((signature, position) => {
-      const tx = fetched[position]
-      if (tx) arfTransactions.set(signature, tx)
-    })
+  const signatures = history.filter((entry) => !entry.err && /ARF-(DRAW|REPAY) /.test(entry.memo ?? '')).map((entry) => entry.signature)
+  for (const signature of signatures) {
+    if (arfTransactions.has(signature)) continue
+    const tx = await e.connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+    if (!tx) throw new RailError(`Arf ledger transaction ${signature} is not readable yet, try again`, 503)
+    arfTransactions.set(signature, tx)
   }
   const current = new Set(signatures)
   for (const signature of arfTransactions.keys()) if (!current.has(signature)) arfTransactions.delete(signature)

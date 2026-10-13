@@ -236,6 +236,7 @@ const dictionary = {
   arfReasonLiquidity: { tr: 'hatta yeterli USDC yok', en: 'too little USDC in the line' },
   arfRepaidOnCashOut: { tr: 'Arf\'a geri ödenen', en: 'Repaid to Arf' },
   arfRepayTx: { tr: 'Arf geri ödemesi', en: 'Arf repayment' },
+  arfRepayLater: { tr: 'sonraki nakit çekimde', en: 'on the next cash-out' },
   sandboxRepayNoteArf: {
     tr: 'Bu bir sandbox mevduatı: banka havalesi simüle edildi; USDC, Arf sandbox hattından çekilip ray üzerinden geldi. Gerçek lira ve gerçek Arf fonu hareket etmedi.',
     en: 'This is a sandbox deposit: the bank transfer was simulated; the USDC was drawn from the Arf sandbox line and came through the rail. No real lira and no real Arf funds moved.',

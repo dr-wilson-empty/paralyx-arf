@@ -130,6 +130,8 @@ export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: 
       if (settled.arf && 'repaid' in settled.arf && settled.arf.repaid > 0) {
         rows.push({ label: t('arfRepaidOnCashOut'), value: `${formatAmount(settled.arf.repaid)} USDC` })
         if (settled.arf.signature) links.push({ label: t('arfRepayTx'), href: txLink(settled.arf.signature) })
+      } else if (settled.arf && 'error' in settled.arf) {
+        rows.push({ label: t('arfRepaidOnCashOut'), value: t('arfRepayLater') })
       }
       setReceipt({ title: t('receiptCashOut'), rows, links, note: t('sandboxNote') })
       addHistory(signer.address, { kind: 'cashout', title: t('receiptCashOut'), amount: `₺${formatAmount(settled.amountOut)}`, detail: settled.externalTransactionId, links })
