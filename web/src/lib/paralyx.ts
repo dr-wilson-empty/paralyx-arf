@@ -512,23 +512,23 @@ export function setupAddresses(d: Deployment, user: PublicKey): PublicKey[] {
 
 export function openLineInstructions(d: Deployment, user: PublicKey, collateral: bigint, borrow: bigint, existing: SetupState): TransactionInstruction[] {
   const instructions = [...computeBudget(1_000_000, 50_000)]
-  if (collateral > 0n) instructions.push(...wrapSol(user, collateral))
+  instructions.push(...(collateral > 0n ? wrapSol(user, collateral) : [createAtaIdempotent(user, user, SOL_MINT)]))
   instructions.push(createAtaIdempotent(user, user, d.debt.mint, d.debt.tokenProgram))
   if (!existing.metadata) instructions.push(initUserMetadata(d, user))
   if (!existing.obligation) instructions.push(initObligation(d, user))
   if (d.collateral.farmCollateral && !existing.collateralFarm) instructions.push(initObligationFarm(d, user, d.collateral, 0))
   if (d.debt.farmDebt && !existing.debtFarm) instructions.push(initObligationFarm(d, user, d.debt, 1))
   instructions.push(openLine(d, user, collateral, borrow))
-  if (collateral > 0n) instructions.push(closeTokenAccount(ataAddress(user, SOL_MINT), user))
+  instructions.push(closeTokenAccount(ataAddress(user, SOL_MINT), user))
   return instructions
 }
 
 export function repayLineInstructions(d: Deployment, user: PublicKey, repay: bigint, withdrawCtokens: bigint): TransactionInstruction[] {
   const instructions = [...computeBudget(1_000_000, 50_000)]
-  if (withdrawCtokens > 0n) instructions.push(createAtaIdempotent(user, user, SOL_MINT))
+  instructions.push(createAtaIdempotent(user, user, SOL_MINT))
   instructions.push(createAtaIdempotent(user, user, d.debt.mint, d.debt.tokenProgram))
   instructions.push(repayLine(d, user, repay, withdrawCtokens))
-  if (withdrawCtokens > 0n) instructions.push(closeTokenAccount(ataAddress(user, SOL_MINT), user))
+  instructions.push(closeTokenAccount(ataAddress(user, SOL_MINT), user))
   return instructions
 }
 
