@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, useCallback, useContext } from 'react'
 
 export type Lang = 'tr' | 'en'
 
@@ -295,5 +295,6 @@ export const LangContext = createContext<{ lang: Lang; setLang: (lang: Lang) => 
 
 export function useT(): { t: (key: DictKey) => string; lang: Lang; setLang: (lang: Lang) => void } {
   const { lang, setLang } = useContext(LangContext)
-  return { t: (key) => dictionary[key][lang], lang, setLang }
+  const t = useCallback((key: DictKey) => dictionary[key][lang], [lang])
+  return { t, lang, setLang }
 }
