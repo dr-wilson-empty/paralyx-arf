@@ -24,7 +24,7 @@ What the listing requires, and where it stands.
 | Triple submission: Colosseum Crypto World's Fair portal, the Superteam Türkiye local track, this listing | Team's to do. Colosseum announced that product submissions were due 12 October 2026; confirm with the listing contact (https://t.me/aysegulsensoy) before relying on a late submission |
 | Pitch video, at most 3 minutes | Script ready in [pitch.md](pitch.md); recording is the team's |
 | Demo video, at most 3 minutes, showing the product working | Script ready in [demo.md](demo.md); recording is the team's |
-| Public GitHub repository, or access for the jury | `dr-wilson-empty/paralyx-arf` is private: make it public or add the jury as collaborators |
+| Public GitHub repository, or access for the jury | Done: https://github.com/dr-wilson-empty/paralyx-arf is public |
 | All materials in English | These files, the README and the app's EN switch |
 | Traction and validation with real users | Protocol in [validation.md](validation.md); the test itself is the team's |
 
