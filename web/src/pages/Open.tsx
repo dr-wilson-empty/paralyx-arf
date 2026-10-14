@@ -1,11 +1,14 @@
 import { LineCard, OpenCard, WalletCard, WithdrawCard } from '../components/cards'
+import { Landmark } from 'lucide-react'
 import { KaminoMark, TokenIcon } from '../components/TokenIcon'
+import { useArfEnabled } from '../lib/arf'
 import { useT, type DictKey } from '../lib/i18n'
 import { useShared } from '../lib/useShared'
 
 export function Open() {
   const { t } = useT()
   const shared = useShared()
+  const arfEnabled = useArfEnabled()
   return (
     <div>
       <section className="pb-6">
@@ -23,6 +26,10 @@ export function Open() {
           <div className="card">
             <h3 className="text-lg text-ink">{t('soonTitle')}</h3>
             <ul className="mt-3 space-y-3 text-sm text-mute">
+              <li className="flex gap-3">
+                <Landmark className="mt-0.5 h-5 w-5 shrink-0 text-ink" />
+                <span>{t('soonArf')}</span>
+              </li>
               <li className="flex gap-3">
                 <TokenIcon symbol="TRY" size={20} className="mt-0.5" />
                 <span>{t('soonBilira')}</span>
@@ -44,7 +51,7 @@ export function Open() {
           <div className="card">
             <h3 className="text-lg text-ink">{t('how')}</h3>
             <ol className="mt-3 space-y-2 text-sm text-mute">
-              {(['how1', 'how2', 'how3', 'how4'] as DictKey[]).map((key, index) => (
+              {(['how1', 'how2', 'how3', arfEnabled ? 'how4Arf' : 'how4'] as DictKey[]).map((key, index) => (
                 <li key={key} className="flex gap-3">
                   <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line text-[10px] text-ink">{index + 1}</span>
                   <span>{t(key)}</span>

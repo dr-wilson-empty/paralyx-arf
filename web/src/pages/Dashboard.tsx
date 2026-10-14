@@ -8,6 +8,7 @@ import { KaminoMark, TokenIcon } from '../components/TokenIcon'
 import { hourlyBuckets, TrendCard } from '../components/TrendCard'
 import { useCached } from '../lib/store'
 import { HAS_SANDBOX_RAIL, IS_MAINNET, PROGRAM_ID } from '../config'
+import { useArfEnabled } from '../lib/arf'
 import { useT } from '../lib/i18n'
 import { useLivePrices } from '../lib/prices'
 import { getLineCount } from '../lib/solana'
@@ -20,6 +21,7 @@ export function Dashboard() {
   const { address, openConnect } = useWallet()
   const navigate = useNavigate()
   const live = useLivePrices()
+  const arfEnabled = useArfEnabled()
   const overview = useCached('overview', () => import('../lib/kamino').then((module) => module.getMarketOverview()), { ttl: 60_000, persist: true, refreshMs: 60_000 }).data ?? null
   const lineCount = useCached(PROGRAM_ID ? 'lineCount' : null, getLineCount, { ttl: 30_000, persist: true, refreshMs: 30_000 }).data ?? null
 
@@ -36,7 +38,7 @@ export function Dashboard() {
         <div className="flex flex-col justify-center py-4 lg:col-span-3">
           <span className="pill">{IS_MAINNET ? t('mainnetNotice') : t('heroKicker')}</span>
           <h1 className="mt-4 max-w-2xl text-4xl tracking-tight text-ink sm:text-6xl">{t('tagline')}</h1>
-          <p className="mt-4 max-w-xl text-base text-mute sm:text-lg">{t('subtitle')}</p>
+          <p className="mt-4 max-w-xl text-base text-mute sm:text-lg">{t(arfEnabled ? 'subtitleArf' : 'subtitle')}</p>
           <div className="mt-6 flex flex-wrap gap-2">
             {address ? (
               <MotionButton onClick={() => navigate('/open')}>

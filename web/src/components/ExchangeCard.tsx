@@ -3,7 +3,7 @@ import { ArrowDownToLine, Banknote, FlaskConical } from 'lucide-react'
 import { RAIL_MAX_TRY, RAIL_MAX_USDC, RAIL_MIN_TRY, RAIL_MIN_USDC, addressLink } from '../config'
 import { rail, type ArfRefusal, type RailFunding, type RailQuote, type RailSettlement } from '../lib/rail'
 import { REPAY_ALL, WITHDRAW_ALL, formatAmount, payToRail, recordPayout, repayLine, usdcUnits } from '../lib/solana'
-import { refreshArf } from '../lib/arf'
+import { refreshArf, useArfEnabled } from '../lib/arf'
 import { addHistory } from '../lib/history'
 import { useT, type DictKey } from '../lib/i18n'
 import { useLivePrices } from '../lib/prices'
@@ -32,6 +32,7 @@ function fundingLabel(t: (key: DictKey) => string, funding: RailFunding): string
 export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: Shared) {
   const { t } = useT()
   const live = useLivePrices()
+  const arfEnabled = useArfEnabled()
   const [mode, setMode] = useState<Mode>('cashout')
   const [amount, setAmount] = useState('10')
   const [quote, setQuote] = useState<{ value: RailQuote; at: number } | null>(null)
@@ -217,7 +218,7 @@ export function ExchangeCard({ signer, wallet, line, position, rate, refresh }: 
           ]}
         />
       </div>
-      <p className="mt-3 text-sm text-mute">{cashOut ? t('cashOutHint') : t('repayHint')}</p>
+      <p className="mt-3 text-sm text-mute">{cashOut ? t('cashOutHint') : t(arfEnabled ? 'repayHintArf' : 'repayHint')}</p>
 
       <div className="mt-4 space-y-3">
         {cashOut ? (

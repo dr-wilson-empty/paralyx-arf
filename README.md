@@ -279,13 +279,13 @@ Limits and trust, stated plainly:
 
 ## The app
 
-Five screens, in Turkish and English, with a dark theme. One switch in the top bar picks the network. **Devnet** is the working deployment: Kamino's real klend program, live Pyth prices, the Arf line, and a lira leg labeled as a sandbox on every screen. **Mainnet** is read only: the app shows Kamino's Main Market live, the Paralyx programs are not deployed there, and the BiLira and Arf cards list their remaining work.
+Five screens, in Turkish and English, with a dark theme. One switch in the top bar picks the network. Copy that mentions Arf appears only while the rail reports an Arf line, so a deployment without `ARF_LINE`, and mainnet, keep the generic wording. **Devnet** is the working deployment: Kamino's real klend program, live Pyth prices, the Arf line, and a lira leg labeled as a sandbox on every screen. **Mainnet** is read only: the app shows Kamino's Main Market live, the Paralyx programs are not deployed there, and the BiLira and Arf cards list their remaining work.
 
-- **Takas (Exchange).** Cash out and repay in lira through the rail, with the Arf line card beside it (see [The rail on Arf](#the-rail-on-arf)). Receipts name the Arf draw or say why the float paid.
-- **Panel.** Available lira limit, collateral, debt, health factor with LTV and liquidation LTV, live USD/TRY and SOL/USD charts, lines opened per hour, recent activity. The integrations row includes Arf.
+- **Takas (Exchange).** Cash out and repay in lira through the rail, with the Arf line card beside it (see [The rail on Arf](#the-rail-on-arf)). The repay hint says the USDC comes from the Arf line, and receipts name the Arf draw or say why the float paid.
+- **Panel.** The opening line says lira repayments settle from an Arf liquidity line. Below it: available lira limit, collateral, debt, health factor with LTV and liquidation LTV, live USD/TRY and SOL/USD charts, lines opened per hour, recent activity. The integrations row includes Arf.
 - **Piyasa (Market).** The Kamino market's active reserves, with Paralyx's hourly and cumulative lira payouts and USDC borrowed, from program events.
 - **Hareketler (Activity).** Protocol totals and the event feed, filterable to your address, every row linked to Solana Explorer.
-- **Hat aç (Open a line).** Devnet SOL faucet, the collateral and borrow form with the borrow limit preview, the collateral withdrawal card.
+- **Hat aç (Open a line).** Devnet SOL faucet, the collateral and borrow form with the borrow limit preview, the collateral withdrawal card, how it works (the repayment step names the Arf line) and the roadmap, which starts with Arf in production.
 
 Data sources: Kamino reserves and the user's obligation through klend-sdk (`web/src/lib/kamino.ts`, loaded on demand); SOL/USD from Pyth through the rail function, with Pyth's on-chain push feed as the fallback; USD/TRY, price history and the Arf line from the rail function. Transactions are built in `web/src/lib/paralyx.ts`, which the Node scripts import too. klend-sdk 13 pulls in Orca's WebAssembly bindings with a top-level await that Vite cannot bundle, so the build aliases kliquidity-sdk to `web/src/shims/kliquidity.ts`, which reimplements the three helpers it needs.
 
