@@ -248,13 +248,17 @@ export async function getActivity(): Promise<ActivityEvent[]> {
   if (fresh.length === 0) return log.events
   const decoded: ActivityEvent[] = []
   let missing = false
-  for (let index = 0; index < fresh.length; index += 25) {
-    const chunk = fresh.slice(index, index + 25)
-    const transactions = await connection.getParsedTransactions(chunk.map((entry) => entry.signature), { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-    missing ||= transactions.some((transaction) => transaction === null)
-    for (const transaction of transactions) {
-      for (const { signature, blockTime, ...event } of eventsFromTransaction(transaction, PROGRAM_ID)) decoded.push({ ...event, closedAt: (blockTime ?? 0) * 1000, txHash: signature })
+  // One request per transaction: public RPCs reject batched getParsedTransactions with 429.
+  for (const entry of fresh) {
+    let transaction: Awaited<ReturnType<typeof connection.getParsedTransaction>>
+    try {
+      transaction = await connection.getParsedTransaction(entry.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+    } catch {
+      missing = true
+      break
     }
+    missing ||= transaction === null
+    for (const { signature, blockTime, ...event } of eventsFromTransaction(transaction, PROGRAM_ID)) decoded.push({ ...event, closedAt: (blockTime ?? 0) * 1000, txHash: signature })
   }
   const seen = new Set(log.events.map((event) => `${event.txHash}:${event.kind}`))
   const merged = [...decoded.filter((event) => !seen.has(`${event.txHash}:${event.kind}`)), ...log.events]
