@@ -1,0 +1,23 @@
+# The app lives in web/; the sandbox rail runs as a Netlify function behind /api/rail.
+# Its environment (SANDBOX_TREASURY_SECRET, ARF_LINE, RAIL_RPC) is set in the Netlify UI with the Functions scope.
+[build]
+  base = "web"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/rail"
+  to = "/.netlify/functions/rail"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

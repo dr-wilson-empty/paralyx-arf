@@ -1,6 +1,6 @@
 # Deploying the app with the Arf line
 
-The app is a Vite build with one Vercel function, `web/api/rail.ts`. These steps put it on Vercel against the devnet line from the README's proof run.
+The app is a Vite build with one server function, `web/api/rail.ts`, which runs on Vercel or, through `web/netlify/functions/rail.mts`, on Netlify. These steps put it on either against the devnet line from the README's proof run.
 
 ## Keys
 
@@ -52,6 +52,23 @@ A different treasury key needs a new line, because a line's operator is fixed: `
    ```
 
    It should answer `"enabled": true` with the line, the vault balance and the draws. Then open `/exchange` and look for the Arf liquidity line card.
+
+## Netlify
+
+`netlify.toml` at the repository root sets everything the build needs: base `web`, `npm run build`, publish `dist`, Node 22, and the rail as the function `web/netlify/functions/rail.mts`, which `/api/rail` rewrites to before the single-page fallback.
+
+1. Add a new project, import `dr-wilson-empty/paralyx-arf` from Git, and leave the build settings as `netlify.toml` gives them.
+
+2. In Project configuration > Environment variables, add these with the **Functions** scope. Variables in `netlify.toml` do not reach functions.
+
+   - `SANDBOX_TREASURY_SECRET`: the JSON array in `.keys/treasury-local.json`; mark it as containing secret values.
+   - `ARF_LINE`: `7zLBPHXSMZ8xY2ep9CBX65zWVh1UERZK3J1yHvWwSTer`.
+   - `RAIL_RPC`: a devnet RPC endpoint of your own, as on Vercel.
+   - `PYTH_API_KEY` is optional. Never set `VITE_BURNER_WALLET`.
+
+3. Deploy, or trigger a new deploy after changing a variable; values are fixed per deploy.
+
+4. Check it the same way: `curl https://<your site>.netlify.app/api/rail?action=arf` answers `"enabled": true`.
 
 ## Keeping it working
 

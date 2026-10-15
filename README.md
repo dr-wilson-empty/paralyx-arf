@@ -216,7 +216,7 @@ flowchart LR
     UI[Paralyx web app<br/>React, Vite, Solana wallet adapter]
     SDK[klend-sdk<br/>market and obligation reads]
   end
-  subgraph Server[Vercel function]
+  subgraph Server[Server function: Vercel or Netlify]
     RAIL[/api/rail<br/>rail operator: quotes, payouts, deposits, Arf draws/]
   end
   subgraph Solana[Solana devnet or mainnet]
@@ -293,7 +293,7 @@ Data sources: Kamino reserves and the user's obligation through klend-sdk (`web/
 
 `web/src/lib/rail.ts` defines `FiatRail`: `quote`, `startPayout`, `confirmPayout`, `startDeposit` and `settleDeposit`. It has two implementations:
 
-- **SandboxRail** (devnet), backed by `web/api/rail.ts` and served at `/api/rail` by a Vercel function and by the Vite dev and preview servers. It quotes USD/TRY plus 50 bps.
+- **SandboxRail** (devnet), backed by `web/api/rail.ts` and served at `/api/rail` by a Vercel function, by a Netlify function (`web/netlify/functions/rail.mts`, routed in `netlify.toml`) and by the Vite dev and preview servers. It quotes USD/TRY plus 50 bps.
   - **Payout.** The rail returns an HMAC-signed instruction. After the user's transfer, it reads the transaction from devnet and checks the USDC amount, the treasury account, the authority and the memo before it returns an `SBX-` reference.
   - **Deposit.** It is settled from the Arf line first and from the treasury float as the fallback, with the deposit id as the reference, so a retry returns the first settlement instead of paying again. The instruction expires after 15 minutes.
   - **Only real repayments.** Both funding sources pay only Kamino repayments. When the instruction is issued, and again before it pays, the rail requires USDC debt in the configured market, a wallet balance below that debt, and an amount no larger than the debt plus 2% and 1.5 USDC.
@@ -363,7 +363,7 @@ The deployed `arf_line` binary is 294,304 bytes, with sha256 `97163f4792cdff7c52
 
 ```
 contracts/            Anchor workspace: arf_line and credit_line programs, LiteSVM tests, mainnet fixtures script
-web/                  React + Vite app, Vercel function for the rail (api/)
+web/                  React + Vite app, the rail's server function (api/, wrapped for Netlify in netlify/functions/)
 scripts/              Node helpers: run an Arf line, open a line, cash out, repay in lira, decode events
 docs/arf-track/       Submission kit: descriptions, pitch, demo, jury Q&A, campus test, deployment
 docs/brand/           Paralyx marks
@@ -397,7 +397,7 @@ npm install
 npm run dev
 ```
 
-The rail's server environment goes in `web/.env.local` locally and in the project settings on Vercel ([deploy.md](docs/arf-track/deploy.md)):
+The rail's server environment goes in `web/.env.local` locally and in the project settings on Vercel or Netlify ([deploy.md](docs/arf-track/deploy.md)):
 
 - `SANDBOX_TREASURY_SECRET`: the devnet treasury keypair as a JSON array. This treasury is the line's operator.
 - `ARF_LINE`: the Arf line's address. Leave it unset to run on the float alone.

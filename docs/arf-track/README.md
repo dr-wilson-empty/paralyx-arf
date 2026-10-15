@@ -9,7 +9,7 @@ Everything the jury asks for, in English as the track requires. Listing: [Arf ×
 | [demo.md](demo.md) | Three-minute demo: the click path on devnet, what to say, what to check before recording |
 | [jury-qa.md](jury-qa.md) | The questions the jury is likely to ask, answered without overclaiming |
 | [validation.md](validation.md) | A campus test with students: protocol, survey and the table to fill |
-| [deploy.md](deploy.md) | Putting the app on Vercel with the Arf line |
+| [deploy.md](deploy.md) | Putting the app on Vercel or Netlify with the Arf line |
 
 ## Checklist
 
